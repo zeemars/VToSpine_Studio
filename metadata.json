@@ -1,0 +1,5 @@
+{
+  "name": "VToSpine - Video to Spine Animation Converter",
+  "description": "A comprehensive web application to extract sequence frames from video, remove backgrounds using Chroma Key, and generate Spine-compatible animation files (JSON + Atlas + Images).",
+  "requestFramePermissions": []
+}
