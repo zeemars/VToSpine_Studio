@@ -168,7 +168,7 @@ const App: React.FC = () => {
     const parts = filename.split('.');
     if (parts.length > 1) parts.pop();
     const base = parts.join('.') || 'animation';
-    return `${base}_${id.slice(-4)}`;
+    return base;
   };
 
   const batchExportSpine = async () => {
@@ -254,6 +254,35 @@ const App: React.FC = () => {
     setIsExporting(false);
   };
 
+  const batchExportPngs = async () => {
+    const JSZip = (window as any).JSZip;
+    if (!JSZip) return alert(t.alertZipError);
+    const completedTasks = tasks.filter(t => t.status === 'done');
+    if (completedTasks.length === 0) return alert(t.alertSelectFrame);
+    setIsExporting(true);
+    setExportProgress(0);
+    const zip = new JSZip();
+    
+    for (let i = 0; i < completedTasks.length; i++) {
+      const task = completedTasks[i];
+      setExportProgress(((i + 0.1) / completedTasks.length) * 100);
+      
+      const spriteSheetBase64 = await generateSpriteSheet(task.frames, exportSettings);
+      const spriteSheetData = spriteSheetBase64.split(',')[1];
+      
+      const pngFileName = `${getSafeBaseName(task.name, task.id)}.png`;
+      zip.file(pngFileName, spriteSheetData, { base64: true });
+      setExportProgress(((i + 1) / completedTasks.length) * 100);
+    }
+
+    const content = await zip.generateAsync({ type: "blob" });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(content);
+    link.download = `png_bundle_${Date.now()}.zip`;
+    link.click();
+    setIsExporting(false);
+  };
+
   const getBgClass = () => {
     switch(previewBg) {
       case 'white': return 'bg-white';
@@ -304,7 +333,11 @@ const App: React.FC = () => {
             <Languages size={14} /> {t.langSwitch}
           </button>
           <div className="h-6 w-[1px] bg-slate-200 mx-2" />
-          <a href="https://github.com/zee-mars" target="_blank" className="text-slate-400 hover:text-slate-900 transition-colors"><Github size={20} /></a>
+          <a href="https://space.bilibili.com/487432166" target="_blank" className="text-slate-400 hover:text-slate-900 transition-colors flex items-center justify-center">
+            <img src="https://www.bilibili.com/favicon.ico" width="20" height="20" alt="Bilibili" className="rounded-full" />
+          </a>
+          <div className="h-6 w-[1px] bg-slate-200 mx-2" />
+          <a href="https://github.com/zeemars" target="_blank" className="text-slate-400 hover:text-slate-900 transition-colors"><Github size={20} /></a>
         </div>
       </header>
 
@@ -329,6 +362,34 @@ const App: React.FC = () => {
           <div className="h-full flex flex-col items-center justify-center p-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
             <div 
               onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.add('border-blue-400', 'bg-blue-50/30', 'shadow-xl', 'shadow-blue-50');
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50/30', 'shadow-xl', 'shadow-blue-50');
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.currentTarget.classList.remove('border-blue-400', 'bg-blue-50/30', 'shadow-xl', 'shadow-blue-50');
+                const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('video/'));
+                if (files.length > 0) {
+                  const newTasks: BatchTask[] = files.map((file: File) => ({
+                    id: Math.random().toString(36).substr(2, 9),
+                    file, 
+                    name: file.name, 
+                    status: 'pending', 
+                    frames: [], 
+                    progress: 0,
+                    videoUrl: URL.createObjectURL(file),
+                    settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, enabled: true }
+                  }));
+                  setTasks(prev => [...prev, ...newTasks]);
+                  if (!activeTaskId && newTasks.length > 0) setActiveTaskId(newTasks[0].id);
+                  setCurrentStep(2);
+                }
+              }}
               className="group relative w-full max-w-2xl aspect-[16/10] bg-white border-4 border-dashed border-slate-200 rounded-[3rem] flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/20 transition-all hover:shadow-2xl hover:shadow-blue-50"
             >
               <div className="bg-blue-50 text-blue-600 p-8 rounded-[2rem] mb-6 group-hover:scale-110 transition-transform shadow-inner">
@@ -336,6 +397,7 @@ const App: React.FC = () => {
               </div>
               <h2 className="text-3xl font-black text-slate-900 tracking-tight">{t.uploadTitle}</h2>
               <p className="text-slate-400 font-bold mt-2 text-lg">{t.uploadDesc}</p>
+              <p className="text-slate-300 font-bold mt-1 text-sm">或直接拖放视频文件到此处</p>
               <div className="mt-8 flex gap-4">
                  <div className="flex items-center gap-2 bg-slate-100 px-4 py-2 rounded-full text-xs font-black text-slate-500 uppercase tracking-widest">
                    <Check size={14} /> Spine Grid Atlas
@@ -626,6 +688,15 @@ const App: React.FC = () => {
                          <div className="bg-white/10 p-4 rounded-2xl group-hover:scale-110 transition-transform"><Download size={32} /></div>
                          <span className="text-sm uppercase tracking-widest">{t.exportPackage}</span>
                          <span className="text-[9px] opacity-40">(Combined Grid PNG)</span>
+                      </button>
+                      
+                      <button 
+                        onClick={batchExportPngs}
+                        className="flex-1 bg-green-600 text-white rounded-[2rem] p-8 font-black flex flex-col items-center justify-center gap-3 hover:bg-green-700 transition-all hover:shadow-2xl hover:shadow-green-100 group active:scale-[0.98]"
+                      >
+                         <div className="bg-white/10 p-4 rounded-2xl group-hover:scale-110 transition-transform"><ImageIcon size={32} /></div>
+                         <span className="text-sm uppercase tracking-widest">Export PNG</span>
+                         <span className="text-[9px] opacity-40">(Sprite Sheet ZIP)</span>
                       </button>
                       
                       <button 
