@@ -75,8 +75,9 @@ export const applyChromaKey = (
       const data = imageData.data;
 
       const { r: targetR, g: targetG, b: targetB } = settings.targetColor;
-      const { threshold, smoothing } = settings;
+      const { threshold, smoothing, edgeShrink } = settings;
 
+      // Step 1: Apply chroma key
       for (let i = 0; i < data.length; i += 4) {
         const r = data[i];
         const g = data[i + 1];
@@ -98,8 +99,114 @@ export const applyChromaKey = (
         }
       }
 
-      ctx.putImageData(imageData, 0, 0);
-      resolve(canvas.toDataURL('image/png'));
+      // Step 2: Apply edge shrink if needed
+      if (edgeShrink > 0) {
+        const shrinkDistance = edgeShrink;
+        const newData = new Uint8ClampedArray(data);
+
+        for (let y = 0; y < canvas.height; y++) {
+          for (let x = 0; x < canvas.width; x++) {
+            const index = (y * canvas.width + x) * 4;
+            const alpha = data[index + 3];
+
+            if (alpha > 0) {
+              // Check surrounding pixels
+              let hasTransparentNeighbor = false;
+              
+              for (let dy = -shrinkDistance; dy <= shrinkDistance; dy++) {
+                for (let dx = -shrinkDistance; dx <= shrinkDistance; dx++) {
+                  if (dx === 0 && dy === 0) continue;
+                  
+                  const nx = x + dx;
+                  const ny = y + dy;
+                  
+                  if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
+                    const neighborIndex = (ny * canvas.width + nx) * 4;
+                    const neighborAlpha = data[neighborIndex + 3];
+                    
+                    if (neighborAlpha === 0) {
+                      hasTransparentNeighbor = true;
+                      break;
+                    }
+                  }
+                }
+                if (hasTransparentNeighbor) break;
+              }
+
+              if (hasTransparentNeighbor) {
+                newData[index + 3] = 0; // Make transparent
+              }
+            }
+          }
+        }
+
+        ctx.putImageData(new ImageData(newData, canvas.width, canvas.height), 0, 0);
+      } else {
+        ctx.putImageData(imageData, 0, 0);
+      }
+
+      // Step 3: Apply canvas resize if pixelate is enabled
+      let finalCanvas = canvas;
+      let finalCtx = ctx;
+      
+      if (settings.pixelate) {
+        // Create resized canvas if needed
+        if (settings.canvasWidth !== canvas.width || settings.canvasHeight !== canvas.height) {
+          const resizeCanvas = document.createElement('canvas');
+          resizeCanvas.width = settings.canvasWidth;
+          resizeCanvas.height = settings.canvasHeight;
+          const resizeCtx = resizeCanvas.getContext('2d');
+          
+          if (resizeCtx) {
+            // Calculate aspect ratio to maintain proportions
+            const aspectRatio = Math.min(
+              settings.canvasWidth / canvas.width,
+              settings.canvasHeight / canvas.height
+            );
+            const newWidth = canvas.width * aspectRatio;
+            const newHeight = canvas.height * aspectRatio;
+            const offsetX = (settings.canvasWidth - newWidth) / 2;
+            const offsetY = (settings.canvasHeight - newHeight) / 2;
+            
+            // Draw image to resized canvas
+            resizeCtx.drawImage(
+              canvas, 
+              offsetX, offsetY, 
+              newWidth, newHeight
+            );
+            
+            finalCanvas = resizeCanvas;
+            finalCtx = resizeCtx;
+          }
+        }
+        
+        // Apply pixelation if pixelSize > 1
+        if (settings.pixelSize > 1) {
+          const pixelSize = settings.pixelSize;
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = Math.floor(finalCanvas.width / pixelSize);
+          tempCanvas.height = Math.floor(finalCanvas.height / pixelSize);
+          const tempCtx = tempCanvas.getContext('2d');
+          
+          if (tempCtx) {
+            // Draw image to temp canvas with reduced size
+            tempCtx.drawImage(finalCanvas, 0, 0, tempCanvas.width, tempCanvas.height);
+            
+            // Clear final canvas
+            finalCtx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
+            
+            // Draw pixelated image back to final canvas
+            finalCtx.imageSmoothingEnabled = false;
+            finalCtx.drawImage(tempCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
+          }
+        }
+      }
+
+      // Crop is now handled in batch mode via handleCrop function in App.tsx
+      // This function no longer performs individual frame cropping
+
+      // Use final canvas for output
+      resolve(finalCanvas.toDataURL('image/png'));
     };
   });
 };

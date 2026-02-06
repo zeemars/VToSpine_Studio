@@ -1,9 +1,9 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { 
-  Upload, Settings, Trash2, Play, Download, CheckCircle2, Eraser, Monitor,
+  Upload, Settings, Trash2, Play, Pause, Rewind, Download, CheckCircle2, Eraser, Monitor,
   Image as ImageIcon, Loader2, Languages, ChevronRight, ChevronLeft, Eye, 
-  Palette, Github, Check, FileVideo, AlertTriangle, Plus, RefreshCcw, X, Edit3, Layers
+  Palette, Github, Check, FileVideo, AlertTriangle, Plus, RefreshCcw, X, Edit3, Layers,
+  Minimize2, Maximize2, Scissors
 } from 'lucide-react';
 import { FrameData, ChromaSettings, ExportSettings } from './types';
 import { extractFramesFromVideo, applyChromaKey, getTopLeftColor } from './utils/imageProcessing';
@@ -42,9 +42,26 @@ const App: React.FC = () => {
   const [previewFrameIdx, setPreviewFrameIdx] = useState(0);
   const [previewBg, setPreviewBg] = useState<'checker' | 'white' | 'black' | 'green' | 'blue'>('checker');
   const [showProcessedInPreview, setShowProcessedInPreview] = useState(true);
+  const [previewPaused, setPreviewPaused] = useState(false);
 
   const [exportSettings, setExportSettings] = useState<ExportSettings>({
-    width: 720, height: 1280, fps: 15, prefix: 'anim'
+    fps: 15, prefix: 'anim',
+    layout: 'grid',
+    columns: 4,
+    useCurrentSize: true,
+    frameWidth: 310,
+    frameHeight: 494,
+    lockRatio: true,
+    scalingAlgorithm: 'Lanczos',
+    spacing: 0
+  });
+
+  // 预览窗口状态
+  const [previewWindow, setPreviewWindow] = useState({
+    position: { x: 32, y: window.innerHeight - 400 }, // 初始位置
+    isDragging: false,
+    startDrag: { x: 0, y: 0 },
+    isMinimized: false
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -64,8 +81,53 @@ const App: React.FC = () => {
     initGifLib();
   }, []);
 
+  // 预览窗口拖动事件处理
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setPreviewWindow(prev => ({
+      ...prev,
+      isDragging: true,
+      startDrag: {
+        x: e.clientX - prev.position.x,
+        y: e.clientY - prev.position.y
+      }
+    }));
+  };
+
+  // 添加全局鼠标事件监听器
   useEffect(() => {
-    if (activeTask && activeTask.frames.length > 0) {
+    if (previewWindow.isDragging) {
+      // 创建一个闭包，捕获当前的startDrag值
+      const startDrag = { ...previewWindow.startDrag };
+      
+      const handleGlobalMouseMove = (e: MouseEvent) => {
+        setPreviewWindow(prev => ({
+          ...prev,
+          position: {
+            x: e.clientX - startDrag.x,
+            y: e.clientY - startDrag.y
+          }
+        }));
+      };
+      
+      const handleGlobalMouseUp = () => {
+        setPreviewWindow(prev => ({
+          ...prev,
+          isDragging: false
+        }));
+      };
+      
+      document.addEventListener('mousemove', handleGlobalMouseMove);
+      document.addEventListener('mouseup', handleGlobalMouseUp);
+      
+      return () => {
+        document.removeEventListener('mousemove', handleGlobalMouseMove);
+        document.removeEventListener('mouseup', handleGlobalMouseUp);
+      };
+    }
+  }, [previewWindow.isDragging]);
+
+  useEffect(() => {
+    if (activeTask && activeTask.frames.length > 0 && !previewPaused) {
       const selectedFrames = activeTask.frames.filter(f => f.selected);
       if (selectedFrames.length === 0) return;
       const interval = setInterval(() => {
@@ -73,7 +135,7 @@ const App: React.FC = () => {
       }, 1000 / exportSettings.fps);
       return () => clearInterval(interval);
     }
-  }, [activeTaskId, activeTask?.frames, exportSettings.fps]);
+  }, [activeTaskId, activeTask?.frames, exportSettings.fps, previewPaused]);
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -86,7 +148,7 @@ const App: React.FC = () => {
         frames: [], 
         progress: 0,
         videoUrl: URL.createObjectURL(file),
-        settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, enabled: true }
+        settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, edgeShrink: 0, pixelate: false, pixelSize: 4, canvasWidth: 512, canvasHeight: 512, crop: false, cropMode: 'max', fixedCropWidth: 512, fixedCropHeight: 512, cropMargin: { top: 0, bottom: 0, left: 0, right: 0 }, enabled: true }
       }));
       setTasks(prev => [...prev, ...newTasks]);
       if (!activeTaskId && newTasks.length > 0) setActiveTaskId(newTasks[0].id);
@@ -154,13 +216,163 @@ const App: React.FC = () => {
     const task = { ...activeTask, settings: { ...activeTask.settings, ...newSettings } };
     updateTask(task);
     
-    if (task.frames.length > 0) {
+    // Skip reprocessing if only crop-related settings changed
+    const cropSettings = ['crop', 'cropMode', 'fixedCropWidth', 'fixedCropHeight', 'cropMargin'];
+    const onlyCropSettingsChanged = Object.keys(newSettings).every(key => 
+      cropSettings.includes(key) || 
+      (key === 'cropMargin' && typeof newSettings[key] === 'object')
+    );
+    
+    if (task.frames.length > 0 && !onlyCropSettingsChanged) {
       const newFrames = [...task.frames];
       for (let i = 0; i < newFrames.length; i++) {
         newFrames[i].processedBlob = await applyChromaKey(newFrames[i].originalBlob, task.settings);
       }
       task.frames = newFrames;
       updateTask(task);
+    }
+  };
+  
+  const handleCrop = async () => {
+    if (!activeTask) return;
+    
+    setGlobalProcessing(true);
+    
+    try {
+      // Step 1: Calculate boundaries for all frames to determine max size
+      let maxWidth = 0;
+      let maxHeight = 0;
+      const frameBoundaries = [];
+      
+      // First pass: Calculate boundaries for each frame
+      for (let i = 0; i < activeTask.frames.length; i++) {
+        const frame = activeTask.frames[i];
+        if (!frame.processedBlob) continue;
+        
+        // Create canvas and load image
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) continue;
+        
+        const img = new Image();
+        img.src = frame.processedBlob;
+        await new Promise(resolve => { img.onload = resolve; });
+        
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+        
+        // Calculate boundaries
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+        let minX = canvas.width;
+        let maxX = 0;
+        let minY = canvas.height;
+        let maxY = 0;
+        
+        for (let y = 0; y < canvas.height; y++) {
+          for (let x = 0; x < canvas.width; x++) {
+            const index = (y * canvas.width + x) * 4;
+            const alpha = data[index + 3];
+            if (alpha > 0) {
+              minX = Math.min(minX, x);
+              maxX = Math.max(maxX, x);
+              minY = Math.min(minY, y);
+              maxY = Math.max(maxY, y);
+            }
+          }
+        }
+        
+        // Add margins
+        const margin = activeTask.settings.cropMargin;
+        minX = Math.max(0, minX - margin.left);
+        maxX = Math.min(canvas.width - 1, maxX + margin.right);
+        minY = Math.max(0, minY - margin.top);
+        maxY = Math.min(canvas.height - 1, maxY + margin.bottom);
+        
+        const width = maxX - minX + 1;
+        const height = maxY - minY + 1;
+        
+        frameBoundaries.push({ minX, maxX, minY, maxY, width, height });
+        
+        if (activeTask.settings.cropMode === 'max') {
+          maxWidth = Math.max(maxWidth, width);
+          maxHeight = Math.max(maxHeight, height);
+        }
+      }
+      
+      // Step 2: Apply cropping to all frames
+      const updatedFrames = [...activeTask.frames];
+      
+      for (let i = 0; i < updatedFrames.length; i++) {
+        const frame = updatedFrames[i];
+        if (!frame.processedBlob) continue;
+        
+        const boundaries = frameBoundaries[i];
+        if (!boundaries) continue;
+        
+        // Create canvas and load image
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (!ctx) continue;
+        
+        const img = new Image();
+        img.src = frame.processedBlob;
+        await new Promise(resolve => { img.onload = resolve; });
+        
+        // Determine crop size based on mode
+        let cropWidth, cropHeight, offsetX, offsetY;
+        
+        if (activeTask.settings.cropMode === 'max') {
+          cropWidth = maxWidth;
+          cropHeight = maxHeight;
+          offsetX = (maxWidth - boundaries.width) / 2;
+          offsetY = (maxHeight - boundaries.height) / 2;
+        } else {
+          // Fixed size mode
+          cropWidth = activeTask.settings.fixedCropWidth;
+          cropHeight = activeTask.settings.fixedCropHeight;
+          offsetX = (cropWidth - boundaries.width) / 2;
+          offsetY = (cropHeight - boundaries.height) / 2;
+        }
+        
+        // Create crop canvas
+        const cropCanvas = document.createElement('canvas');
+        cropCanvas.width = cropWidth;
+        cropCanvas.height = cropHeight;
+        const cropCtx = cropCanvas.getContext('2d');
+        if (!cropCtx) continue;
+        
+        // Clear canvas with transparent background
+        cropCtx.clearRect(0, 0, cropWidth, cropHeight);
+        
+        // Draw cropped region centered in the new canvas
+        cropCtx.drawImage(
+          img,
+          boundaries.minX, boundaries.minY,
+          boundaries.width, boundaries.height,
+          offsetX, offsetY,
+          boundaries.width, boundaries.height
+        );
+        
+        // Update frame with cropped image
+        updatedFrames[i] = {
+          ...frame,
+          processedBlob: cropCanvas.toDataURL('image/png')
+        };
+      }
+      
+      // Update task with cropped frames
+      setTasks(prev => prev.map(task => 
+        task.id === activeTask.id 
+          ? { ...task, frames: updatedFrames }
+          : task
+      ));
+      
+    } catch (error) {
+      console.error('Crop error:', error);
+    } finally {
+      setGlobalProcessing(false);
     }
   };
 
@@ -225,8 +437,8 @@ const App: React.FC = () => {
       const gif = new GIF({ 
         workers: 2, 
         quality: 10, 
-        width: exportSettings.width, 
-        height: exportSettings.height, 
+        width: exportSettings.frameWidth, 
+        height: exportSettings.frameHeight, 
         workerScript: gifWorkerUrl, 
         transparent: 'rgba(0,0,0,0)' 
       });
@@ -383,7 +595,7 @@ const App: React.FC = () => {
                     frames: [], 
                     progress: 0,
                     videoUrl: URL.createObjectURL(file),
-                    settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, enabled: true }
+                    settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, edgeShrink: 0, pixelate: false, pixelSize: 4, canvasWidth: 512, canvasHeight: 512, crop: false, cropMode: 'max', fixedCropWidth: 512, fixedCropHeight: 512, cropMargin: { top: 0, bottom: 0, left: 0, right: 0 }, enabled: true }
                   }));
                   setTasks(prev => [...prev, ...newTasks]);
                   if (!activeTaskId && newTasks.length > 0) setActiveTaskId(newTasks[0].id);
@@ -467,7 +679,134 @@ const App: React.FC = () => {
               </div>
             </aside>
 
-            <section className="flex-1 flex flex-col bg-slate-50 overflow-hidden">
+            <section className="flex-1 flex flex-col bg-slate-50 overflow-hidden relative">
+               {/* 浮动预览窗口 */}
+               {activeTask && (!previewWindow.isMinimized ? (
+                 <div 
+                   className="fixed z-50 bg-white rounded-[3rem] shadow-2xl shadow-black/10 border-2 border-slate-100 animate-in slide-in-from-bottom-8 duration-500"
+                   style={{
+                     left: previewWindow.position.x + 'px',
+                     top: previewWindow.position.y + 'px',
+                     width: 'auto',
+                     minWidth: '320px',
+                     maxWidth: '500px'
+                   }}
+                 >
+                   {/* 标题栏 - 可拖动区域 */}
+                   <div 
+                     className="flex items-center justify-between p-4 border-b border-slate-100 cursor-move"
+                     onMouseDown={handleMouseDown}
+                     style={{ borderRadius: '2rem 2rem 0 0' }}
+                   >
+                     <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">{t.previewAnim}</h4>
+                     <button
+                       onClick={() => setPreviewWindow({ ...previewWindow, isMinimized: true })}
+                       className="bg-slate-200 text-slate-600 p-1.5 rounded-full hover:bg-slate-300 transition-colors"
+                     >
+                       <Minimize2 size={16} />
+                     </button>
+                   </div>
+                   
+                   <div className="p-6 space-y-4">
+                     {/* 预览区域 */}
+                     <div className={`rounded-[2rem] flex items-center justify-center p-6 relative overflow-hidden shadow-inner border border-black/5 ${getBgClass()}`} style={{ minHeight: '200px', minWidth: '200px' }}>
+                        {currentPreviewFrame ? (
+                          <div className="relative w-full flex items-center justify-center">
+                            {/* 上一帧按钮 */}
+                            <button onClick={() => { if (previewFrameIdx > 0) setPreviewFrameIdx(previewFrameIdx - 1); }} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-colors" style={{ zIndex: 10 }}>
+                              <ChevronLeft size={24} />
+                            </button>
+                            
+                            {/* 预览图片 */}
+                            <img src={showProcessedInPreview ? (currentPreviewFrame.processedBlob || currentPreviewFrame.originalBlob) : currentPreviewFrame.originalBlob} className="max-w-full max-h-[300px] object-contain drop-shadow-2xl scale-100" />
+                            
+                            {/* 下一帧按钮 */}
+                            <button onClick={() => { const selectedFrames = activeTask?.frames.filter(f => f.selected) || []; if (previewFrameIdx < selectedFrames.length - 1) setPreviewFrameIdx(previewFrameIdx + 1); }} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-colors" style={{ zIndex: 10 }}>
+                              <ChevronRight size={24} />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-white/10 flex flex-col items-center gap-2">
+                            <Monitor size={48} />
+                            <span className="text-[10px] font-black uppercase tracking-widest">{t.statusPending}</span>
+                          </div>
+                        )}
+                     </div>
+                     
+                     {/* 帧选择横向滚动条 */}
+                     <div className="flex items-center gap-2">
+                       {/* 上一帧按钮 */}
+                       <button onClick={() => { if (previewFrameIdx > 0) setPreviewFrameIdx(previewFrameIdx - 1); }} className="bg-slate-800 text-white p-2 rounded-full hover:bg-slate-700 transition-colors flex-shrink-0" disabled={previewFrameIdx === 0}>
+                         <ChevronLeft size={16} />
+                       </button>
+                       
+                       {/* 帧预览滚动条 */}
+                       <div className="flex-1 overflow-x-auto pb-2">
+                         <div className="flex gap-3 min-w-max">
+                           {activeTask?.frames.filter(f => f.selected).map((frame, idx) => (
+                             <div key={frame.id} onClick={() => setPreviewFrameIdx(idx)} className={`w-12 h-12 rounded-lg border-2 transition-all cursor-pointer ${previewFrameIdx === idx ? 'border-blue-600 shadow-lg' : 'border-slate-100'}`}>
+                               <img src={frame.processedBlob || frame.originalBlob} className="w-full h-full object-cover rounded-md" />
+                             </div>
+                           ))}
+                         </div>
+                       </div>
+                       
+                       {/* 下一帧按钮 */}
+                       <button onClick={() => { const selectedFrames = activeTask?.frames.filter(f => f.selected) || []; if (previewFrameIdx < selectedFrames.length - 1) setPreviewFrameIdx(previewFrameIdx + 1); }} className="bg-slate-800 text-white p-2 rounded-full hover:bg-slate-700 transition-colors flex-shrink-0" disabled={activeTask?.frames.filter(f => f.selected).length === 0 || previewFrameIdx >= (activeTask?.frames.filter(f => f.selected).length || 0) - 1}>
+                         <ChevronRight size={16} />
+                       </button>
+                     </div>
+                     
+                     {/* 背景颜色选择 */}
+                     <div className="flex gap-2">
+                       {(['checker', 'white', 'black', 'green', 'blue'] as const).map(bg => (
+                         <button key={bg} onClick={() => setPreviewBg(bg)} className={`flex-1 h-8 rounded-lg border-2 transition-all ${previewBg === bg ? 'border-blue-600' : 'border-slate-100'} ${bg === 'checker' ? 'bg-white' : bg === 'white' ? 'bg-white' : bg === 'black' ? 'bg-black' : bg === 'green' ? 'bg-green-500' : bg === 'blue' ? 'bg-blue-600' : ''}`} />
+                       ))}
+                     </div>
+                     
+                     {/* 视频播放器样式的控制按钮 */}
+                     <div className="flex gap-2">
+                       <button onClick={() => { setPreviewPaused(true); setPreviewFrameIdx(0); }} className="flex-1 py-2 px-4 rounded-xl bg-slate-800 text-white text-[10px] font-black hover:bg-slate-700 transition-colors flex items-center justify-center gap-2">
+                         <Rewind size={16} />
+                         {t.stopPreview}
+                       </button>
+                       <button onClick={() => setPreviewPaused(!previewPaused)} className="flex-1 py-2 px-4 rounded-xl bg-blue-600 text-white text-[10px] font-black hover:bg-blue-700 transition-colors flex items-center justify-center gap-2">
+                         {previewPaused ? (
+                           <>
+                             <Play size={16} />
+                             {t.startPreview}
+                           </>
+                         ) : (
+                           <>
+                             <Pause size={16} />
+                            {t.pausePreview}
+                           </>
+                         )}
+                       </button>
+                     </div>
+                   </div>
+                 </div>
+               ) : (
+                 /* 最小化状态 */
+                 activeTask && (
+                   <div 
+                     className="fixed z-50 bg-white rounded-[2rem] shadow-xl shadow-black/10 border-2 border-slate-100 animate-in slide-in-from-bottom-8 duration-500"
+                     style={{
+                       left: previewWindow.position.x + 'px',
+                       top: previewWindow.position.y + 'px',
+                       width: '200px'
+                     }}
+                   >
+                     <div className="flex items-center justify-between p-4 cursor-move" onMouseDown={handleMouseDown}>
+                       <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">{t.previewAnim}</h4>
+                       <button onClick={() => setPreviewWindow({ ...previewWindow, isMinimized: false })} className="bg-slate-200 text-slate-600 p-1.5 rounded-full hover:bg-slate-300 transition-colors">
+                         <Maximize2 size={16} />
+                       </button>
+                     </div>
+                   </div>
+                 )
+               ))}
+               
                {activeTask ? (
                  <div className="flex-1 flex overflow-hidden">
                     <div className="flex-1 flex flex-col overflow-hidden">
@@ -534,40 +873,9 @@ const App: React.FC = () => {
                           )}
                        </div>
                     </div>
-
+                    
+                    {/* 右侧边栏 - 只保留抠图参数设置 */}
                     <div className="w-80 bg-white border-l flex flex-col overflow-y-auto p-6 space-y-8 animate-in slide-in-from-right-8 duration-500">
-                       <div className="space-y-4">
-                          <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">{t.previewAnim}</h4>
-                          <div className={`aspect-[9/16] rounded-[2.5rem] flex items-center justify-center p-8 relative overflow-hidden shadow-inner border border-black/5 ${getBgClass()}`}>
-                             {currentPreviewFrame ? (
-                               <img 
-                                 src={showProcessedInPreview ? (currentPreviewFrame.processedBlob || currentPreviewFrame.originalBlob) : currentPreviewFrame.originalBlob} 
-                                 className="max-w-full max-h-full object-contain drop-shadow-2xl scale-110" 
-                               />
-                             ) : (
-                               <div className="text-white/10 flex flex-col items-center gap-2">
-                                 <Monitor size={48} />
-                                 <span className="text-[10px] font-black uppercase tracking-widest">{t.statusPending}</span>
-                               </div>
-                             )}
-                          </div>
-                          <div className="flex gap-2">
-                             {(['checker', 'white', 'black', 'green', 'blue'] as const).map(bg => (
-                               <button 
-                                 key={bg} 
-                                 onClick={() => setPreviewBg(bg)}
-                                 className={`flex-1 h-8 rounded-lg border-2 transition-all ${previewBg === bg ? 'border-blue-600' : 'border-slate-100'} ${
-                                   bg === 'checker' ? 'checkerboard-sm bg-white' : 
-                                   bg === 'white' ? 'bg-white' : 
-                                   bg === 'black' ? 'bg-black' : 
-                                   bg === 'green' ? 'bg-green-500' : 
-                                   bg === 'blue' ? 'bg-blue-600' : ''
-                                 }`}
-                               />
-                             ))}
-                          </div>
-                       </div>
-
                        <div className="space-y-6">
                           <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">{t.chromaKey}</h4>
                           <div className="space-y-4">
@@ -587,7 +895,7 @@ const App: React.FC = () => {
                                      <div className="w-full h-full" style={{ backgroundColor: `rgb(${activeTask.settings.targetColor.r},${activeTask.settings.targetColor.g},${activeTask.settings.targetColor.b})` }} />
                                   </div>
                                   <div className="flex-1">
-                                     <div className="text-[10px] font-black text-slate-800 font-mono uppercase">#{activeTask.settings.targetColor.r.toString(16).padStart(2,'0')}{activeTask.settings.targetColor.g.toString(16).padStart(2,'0')}{activeTask.settings.targetColor.b.toString(16).padStart(2,'0')}</div>
+                                     <div className="text-[10px] font-black text-slate-800 font-mono uppercase">#{activeTask.settings.targetColor.r.toString(16).padStart(2,'0')}${activeTask.settings.targetColor.g.toString(16).padStart(2,'0')}${activeTask.settings.targetColor.b.toString(16).padStart(2,'0')}</div>
                                      <button 
                                        onClick={async () => {
                                           if(activeTask.thumbnail) {
@@ -615,25 +923,191 @@ const App: React.FC = () => {
                                  className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
                                />
                              </div>
-                          </div>
-                       </div>
 
-                       <div className="pt-4 border-t border-slate-100">
-                          <button 
-                            onClick={() => setCurrentStep(3)}
-                            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-black transition-all shadow-xl shadow-slate-100"
-                          >
-                             {t.next} <ChevronRight size={16} />
-                          </button>
+                             <div>
+                               <div className="flex justify-between items-center mb-2">
+                                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.edgeShrink}</label>
+                                  <span className="text-[10px] font-black font-mono text-blue-600">{activeTask.settings.edgeShrink}</span>
+                               </div>
+                               <input 
+                                 type="range" min="0" max="10" step="1" 
+                                 value={activeTask.settings.edgeShrink} 
+                                 onChange={(e) => handleManualSettingsChange({ edgeShrink: +e.target.value })}
+                                 className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                               />
+                             </div>
+
+                             <div className="pt-4 border-t border-slate-100">
+                               <div className="flex justify-between items-center mb-4">
+                                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.pixelate}</label>
+                                  <button 
+                                    onClick={() => handleManualSettingsChange({ pixelate: !activeTask.settings.pixelate })}
+                                    className={`w-10 h-5 rounded-full relative transition-all ${activeTask.settings.pixelate ? 'bg-blue-600' : 'bg-slate-200'}`}
+                                  >
+                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${activeTask.settings.pixelate ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                  </button>
+                               </div>
+                                
+                               {activeTask.settings.pixelate && (
+                                 <div className="space-y-6">
+                                   {/* Canvas Size Selection */}
+                                   <div>
+                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">{t.canvasSize}</label>
+                                     <div className="grid grid-cols-3 gap-2">
+                                       {[16, 32, 64, 128, 512].map(size => (
+                                         <button
+                                           key={size}
+                                           onClick={() => handleManualSettingsChange({ canvasWidth: size, canvasHeight: size })}
+                                           className={`py-2 px-3 rounded-xl text-[10px] font-black transition-all ${activeTask.settings.canvasWidth === size && activeTask.settings.canvasHeight === size ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                                         >
+                                           {size}x{size}
+                                         </button>
+                                       ))}
+                                     </div>
+                                   </div>
+                                   
+                                   {/* Pixel Size */}
+                                   <div>
+                                     <div className="flex justify-between items-center mb-2">
+                                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.pixelSize}</label>
+                                        <span className="text-[10px] font-black font-mono text-blue-600">{activeTask.settings.pixelSize}</span>
+                                     </div>
+                                     <input 
+                                       type="range" min="1" max="10" step="1" 
+                                       value={activeTask.settings.pixelSize} 
+                                       onChange={(e) => handleManualSettingsChange({ pixelSize: +e.target.value })}
+                                       className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                     />
+                                   </div>
+                                 </div>
+                               )}
+                             </div>
+                             
+                             {/* 空白裁剪设置 */}
+                             <div className="pt-4 border-t border-slate-100">
+                               <div className="flex justify-between items-center mb-4">
+                                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.crop}</label>
+                                  <button 
+                                    onClick={() => handleManualSettingsChange({ crop: !activeTask.settings.crop })}
+                                    className={`w-10 h-5 rounded-full relative transition-all ${activeTask.settings.crop ? 'bg-blue-600' : 'bg-slate-200'}`}
+                                  >
+                                    <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${activeTask.settings.crop ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                                  </button>
+                               </div>
+                               
+                               {activeTask.settings.crop && (
+                                 <div className="space-y-6">
+                                   <p className="text-[9px] text-slate-400">{t.cropDesc}</p>
+                                   
+                                   {/* 裁剪模式 */}
+                                   <div>
+                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">{t.cropMode}</label>
+                                     <div className="flex gap-2">
+                                       <button
+                                         onClick={() => handleManualSettingsChange({ cropMode: 'max' })}
+                                         className={`flex-1 py-2 px-3 rounded-xl text-[10px] font-black transition-all ${activeTask.settings.cropMode === 'max' ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                                       >
+                                         {t.maxSize}
+                                       </button>
+                                       <button
+                                         onClick={() => handleManualSettingsChange({ cropMode: 'fixed' })}
+                                         className={`flex-1 py-2 px-3 rounded-xl text-[10px] font-black transition-all ${activeTask.settings.cropMode === 'fixed' ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                                       >
+                                         {t.fixedSize}
+                                       </button>
+                                     </div>
+                                   </div>
+                                   
+                                   {/* 固定尺寸设置 */}
+                                   {activeTask.settings.cropMode === 'fixed' && (
+                                     <div className="space-y-4">
+                                       <div className="grid grid-cols-2 gap-3">
+                                         <div>
+                                           <label className="text-sm">宽:</label>
+                                           <input
+                                             type="number"
+                                             value={activeTask.settings.fixedCropWidth}
+                                             onChange={(e) => handleManualSettingsChange({ fixedCropWidth: parseInt(e.target.value) || 0 })}
+                                             className="w-full p-2 rounded-xl border border-slate-200 text-sm"
+                                           />
+                                         </div>
+                                         <div>
+                                           <label className="text-sm">高:</label>
+                                           <input
+                                             type="number"
+                                             value={activeTask.settings.fixedCropHeight}
+                                             onChange={(e) => handleManualSettingsChange({ fixedCropHeight: parseInt(e.target.value) || 0 })}
+                                             className="w-full p-2 rounded-xl border border-slate-200 text-sm"
+                                           />
+                                         </div>
+                                       </div>
+                                     </div>
+                                   )}
+                                   
+                                   {/* 裁剪边距 */}
+                                   <div>
+                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">{t.cropMargin}</label>
+                                     <div className="grid grid-cols-2 gap-3">
+                                       <div>
+                                         <label className="text-xs text-slate-400 block mb-1">上</label>
+                                         <input
+                                           type="number"
+                                           value={activeTask.settings.cropMargin.top}
+                                           onChange={(e) => handleManualSettingsChange({ cropMargin: { ...activeTask.settings.cropMargin, top: parseInt(e.target.value) || 0 } })}
+                                           className="w-full p-2 rounded-xl border border-slate-200 text-sm"
+                                         />
+                                       </div>
+                                       <div>
+                                         <label className="text-xs text-slate-400 block mb-1">下</label>
+                                         <input
+                                           type="number"
+                                           value={activeTask.settings.cropMargin.bottom}
+                                           onChange={(e) => handleManualSettingsChange({ cropMargin: { ...activeTask.settings.cropMargin, bottom: parseInt(e.target.value) || 0 } })}
+                                           className="w-full p-2 rounded-xl border border-slate-200 text-sm"
+                                         />
+                                       </div>
+                                       <div>
+                                         <label className="text-xs text-slate-400 block mb-1">左</label>
+                                         <input
+                                           type="number"
+                                           value={activeTask.settings.cropMargin.left}
+                                           onChange={(e) => handleManualSettingsChange({ cropMargin: { ...activeTask.settings.cropMargin, left: parseInt(e.target.value) || 0 } })}
+                                           className="w-full p-2 rounded-xl border border-slate-200 text-sm"
+                                         />
+                                       </div>
+                                       <div>
+                                         <label className="text-xs text-slate-400 block mb-1">右</label>
+                                         <input
+                                           type="number"
+                                           value={activeTask.settings.cropMargin.right}
+                                           onChange={(e) => handleManualSettingsChange({ cropMargin: { ...activeTask.settings.cropMargin, right: parseInt(e.target.value) || 0 } })}
+                                           className="w-full p-2 rounded-xl border border-slate-200 text-sm"
+                                         />
+                                       </div>
+                                     </div>
+                                   </div>
+                                   
+                                   {/* 开始裁剪按钮 */}
+                                   <button
+                                     onClick={handleCrop}
+                                     className="w-full py-3 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                                   >
+                                     <Scissors size={14} />
+                                     {t.startCrop}
+                                   </button>
+                                 </div>
+                               )}
+                             </div>
+                          </div>
                        </div>
                     </div>
                  </div>
                ) : (
-                 <div className="h-full flex flex-col items-center justify-center text-slate-300 space-y-6">
-                    <div className="p-12 bg-white rounded-[4rem] border-2 border-dashed border-slate-200">
-                       <Edit3 size={80} className="opacity-10 stroke-[1.5px]" />
-                    </div>
-                    <p className="font-black text-sm uppercase tracking-[0.2em]">{t.selectTaskPrompt}</p>
+                 <div className="h-full flex flex-col items-center justify-center text-slate-300 space-y-4">
+                   <div className="bg-white p-8 rounded-[3rem] border-2 border-dashed border-slate-200">
+                      <FileVideo size={64} className="opacity-10" />
+                   </div>
+                   <p className="font-black text-xs uppercase tracking-widest">{t.selectTaskPrompt}</p>
                  </div>
                )}
             </section>
@@ -641,146 +1115,228 @@ const App: React.FC = () => {
         )}
 
         {currentStep === 3 && (
-          <div className="h-full flex items-center justify-center p-8 overflow-y-auto animate-in zoom-in-95 duration-500">
-             <div className="bg-white border rounded-[3rem] p-12 max-w-4xl w-full shadow-2xl space-y-12">
-                <div className="text-center space-y-4">
-                   <div className="bg-green-100 text-green-600 w-20 h-20 rounded-[2rem] flex items-center justify-center mx-auto shadow-lg shadow-green-50">
-                     <CheckCircle2 size={40} />
-                   </div>
-                   <div>
-                      <h2 className="text-4xl font-black text-slate-900 tracking-tight">Export Workspace</h2>
-                      <p className="text-slate-400 font-bold mt-2">Ready to pack {tasks.filter(t => t.status === 'done').length} successful animations.</p>
-                      <p className="text-[10px] text-blue-600 font-black uppercase mt-2 tracking-widest bg-blue-50 py-1 px-4 rounded-full inline-block">Combined Grid Atlas Mode</p>
-                   </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-                   <div className="bg-slate-50 rounded-[2.5rem] p-8 space-y-6">
-                      <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
-                         <Settings size={20} className="text-slate-400" />
-                         <h3 className="font-black text-xs uppercase tracking-widest text-slate-900">{t.exportSettings}</h3>
+          <div className="h-full flex flex-col p-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
+            <div className="max-w-4xl mx-auto w-full">
+              <h2 className="text-3xl font-black text-slate-900 tracking-tight mb-8">{t.exportSettings}</h2>
+              
+              <div className="bg-white rounded-[3rem] shadow-lg p-8 space-y-8">
+                {/* 导出设置选项卡 */}
+                <div className="space-y-6">
+                  {/* 基本设置 - 移除宽度和高度 */}
+                  <div>
+                    <h3 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-4">{t.basicSettings}</h3>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2">{t.fps}</label>
+                        <input
+                          type="number"
+                          value={exportSettings.fps}
+                          onChange={(e) => setExportSettings({ ...exportSettings, fps: parseInt(e.target.value) || 0 })}
+                          className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                        />
                       </div>
-                      <div className="grid grid-cols-2 gap-4">
-                         <div className="space-y-2">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Width</label>
-                            <input type="number" value={exportSettings.width} onChange={e => setExportSettings({...exportSettings, width: +e.target.value})} className="w-full bg-white border border-slate-100 rounded-xl px-4 py-2 font-mono text-sm focus:border-blue-400 outline-none" />
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Height</label>
-                            <input type="number" value={exportSettings.height} onChange={e => setExportSettings({...exportSettings, height: +e.target.value})} className="w-full bg-white border border-slate-100 rounded-xl px-4 py-2 font-mono text-sm focus:border-blue-400 outline-none" />
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">FPS</label>
-                            <input type="number" value={exportSettings.fps} onChange={e => setExportSettings({...exportSettings, fps: +e.target.value})} className="w-full bg-white border border-slate-100 rounded-xl px-4 py-2 font-mono text-sm focus:border-blue-400 outline-none" />
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Prefix</label>
-                            <input type="text" value={exportSettings.prefix} onChange={e => setExportSettings({...exportSettings, prefix: e.target.value})} className="w-full bg-white border border-slate-100 rounded-xl px-4 py-2 font-mono text-sm focus:border-blue-400 outline-none" />
-                         </div>
+                      <div>
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2">{t.prefix}</label>
+                        <input
+                          type="text"
+                          value={exportSettings.prefix}
+                          onChange={(e) => setExportSettings({ ...exportSettings, prefix: e.target.value })}
+                          className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                        />
                       </div>
-                   </div>
-
-                   <div className="flex flex-col gap-5">
-                      <button 
-                        onClick={batchExportSpine}
-                        className="flex-1 bg-slate-900 text-white rounded-[2rem] p-8 font-black flex flex-col items-center justify-center gap-3 hover:bg-black transition-all hover:shadow-2xl hover:shadow-slate-200 group active:scale-[0.98]"
-                      >
-                         <div className="bg-white/10 p-4 rounded-2xl group-hover:scale-110 transition-transform"><Download size={32} /></div>
-                         <span className="text-sm uppercase tracking-widest">{t.exportPackage}</span>
-                         <span className="text-[9px] opacity-40">(Combined Grid PNG)</span>
-                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* 精灵图设置 */}
+                  <div>
+                    <h3 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-4">{t.spriteSheet}</h3>
+                    
+                    {/* 布局 */}
+                    <div className="mb-6">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">{t.layout}</label>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => setExportSettings({ ...exportSettings, layout: 'grid' })}
+                          className={`flex-1 py-2 px-3 rounded-xl text-[10px] font-black transition-all ${exportSettings.layout === 'grid' ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                        >
+                          {t.gridLayout}
+                        </button>
+                        <button
+                          onClick={() => setExportSettings({ ...exportSettings, layout: 'horizontal' })}
+                          className={`flex-1 py-2 px-3 rounded-xl text-[10px] font-black transition-all ${exportSettings.layout === 'horizontal' ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                        >
+                          {t.horizontalLayout}
+                        </button>
+                        <button
+                          onClick={() => setExportSettings({ ...exportSettings, layout: 'vertical' })}
+                          className={`flex-1 py-2 px-3 rounded-xl text-[10px] font-black transition-all ${exportSettings.layout === 'vertical' ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                        >
+                          {t.verticalLayout}
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* 列数 */}
+                    {exportSettings.layout === 'grid' && (
+                      <div className="mb-6">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2">{t.columns}</label>
+                        <input
+                          type="number"
+                          value={exportSettings.columns}
+                          onChange={(e) => setExportSettings({ ...exportSettings, columns: parseInt(e.target.value) || 1 })}
+                          className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                          min="1"
+                        />
+                      </div>
+                    )}
+                    
+                    {/* 帧尺寸 */}
+                    <div className="mb-6">
+                      <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-3">{t.frameSize}</h4>
+                      <div className="flex items-center justify-between mb-3">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.useCurrentSize}</label>
+                        <button
+                          onClick={() => setExportSettings({ ...exportSettings, useCurrentSize: !exportSettings.useCurrentSize })}
+                          className={`w-10 h-5 rounded-full relative transition-all ${exportSettings.useCurrentSize ? 'bg-blue-600' : 'bg-slate-200'}`}
+                        >
+                          <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${exportSettings.useCurrentSize ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                      </div>
                       
-                      <button 
-                        onClick={batchExportPngs}
-                        className="flex-1 bg-green-600 text-white rounded-[2rem] p-8 font-black flex flex-col items-center justify-center gap-3 hover:bg-green-700 transition-all hover:shadow-2xl hover:shadow-green-100 group active:scale-[0.98]"
-                      >
-                         <div className="bg-white/10 p-4 rounded-2xl group-hover:scale-110 transition-transform"><ImageIcon size={32} /></div>
-                         <span className="text-sm uppercase tracking-widest">Export PNG</span>
-                         <span className="text-[9px] opacity-40">(Sprite Sheet ZIP)</span>
-                      </button>
-                      
-                      <button 
-                        onClick={batchExportGifs}
-                        disabled={!isLibLoaded}
-                        className="flex-1 bg-blue-600 text-white rounded-[2rem] p-8 font-black flex flex-col items-center justify-center gap-3 hover:bg-blue-700 transition-all hover:shadow-2xl hover:shadow-blue-100 group disabled:opacity-30 active:scale-[0.98]"
-                      >
-                         <div className="bg-white/10 p-4 rounded-2xl group-hover:scale-110 transition-transform"><FileVideo size={32} /></div>
-                         <span className="text-sm uppercase tracking-widest">{t.exportGif}</span>
-                         <span className="text-[9px] opacity-40">(Transparent GIF ZIP)</span>
-                      </button>
-                   </div>
+                      {!exportSettings.useCurrentSize && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-sm">宽:</label>
+                            <input
+                              type="number"
+                              value={exportSettings.frameWidth}
+                              onChange={(e) => setExportSettings({ ...exportSettings, frameWidth: parseInt(e.target.value) || 0 })}
+                              className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-sm">高:</label>
+                            <input
+                              type="number"
+                              value={exportSettings.frameHeight}
+                              onChange={(e) => setExportSettings({ ...exportSettings, frameHeight: parseInt(e.target.value) || 0 })}
+                              className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* 缩放算法 */}
+                    <div className="mb-6">
+                      <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-3">{t.scalingAlgorithm}</h4>
+                      <div className="grid grid-cols-2 gap-2">
+                        {['Lanczos', 'Bicubic', 'Bilinear', 'Nearest Neighbor'].map(algorithm => (
+                          <button
+                            key={algorithm}
+                            onClick={() => setExportSettings({ ...exportSettings, scalingAlgorithm: algorithm })}
+                            className={`py-2 px-3 rounded-xl text-[10px] font-black transition-all ${exportSettings.scalingAlgorithm === algorithm ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                          >
+                            {algorithm}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    
+                    {/* 间距 */}
+                    <div className="mb-6">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2">{t.spacing}</label>
+                      <input
+                        type="number"
+                        value={exportSettings.spacing}
+                        onChange={(e) => setExportSettings({ ...exportSettings, spacing: parseInt(e.target.value) || 0 })}
+                        className="w-full p-3 rounded-xl border border-slate-200 text-sm"
+                        min="0"
+                      />
+                    </div>
+                  </div>
                 </div>
-             </div>
+                
+                {/* 导出按钮 */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <button
+                    onClick={batchExportSpine}
+                    disabled={isExporting}
+                    className="py-4 px-6 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all disabled:opacity-30 flex flex-col items-center justify-center gap-3"
+                  >
+                    {isExporting ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : (
+                      <CheckCircle2 size={20} />
+                    )}
+                    {t.exportPackage}
+                  </button>
+                  <button
+                    onClick={batchExportPngs}
+                    disabled={isExporting}
+                    className="py-4 px-6 rounded-xl bg-slate-900 text-white text-[10px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all disabled:opacity-30 flex flex-col items-center justify-center gap-3"
+                  >
+                    {isExporting ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : (
+                      <ImageIcon size={20} />
+                    )}
+                    导出PNG精灵图
+                  </button>
+                  <button
+                    onClick={batchExportGifs}
+                    disabled={isExporting}
+                    className="py-4 px-6 rounded-xl bg-slate-800 text-white text-[10px] font-black uppercase tracking-widest hover:bg-slate-700 transition-all disabled:opacity-30 flex flex-col items-center justify-center gap-3"
+                  >
+                    {isExporting ? (
+                      <Loader2 size={20} className="animate-spin" />
+                    ) : (
+                      <FileVideo size={20} />
+                    )}
+                    {t.exportGif}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
       </main>
-
-      <footer className="bg-white border-t px-8 py-3 flex items-center justify-between z-50">
-        <button 
-          disabled={currentStep === 1} 
-          onClick={() => setCurrentStep(prev => prev - 1)}
-          className="flex items-center gap-2 font-black text-[10px] uppercase tracking-widest text-slate-400 hover:text-slate-900 disabled:opacity-10 transition-colors"
-        >
-          <ChevronLeft size={16} /> {t.back}
-        </button>
-
-        <button 
-          disabled={currentStep === 3 || tasks.length === 0} 
-          onClick={() => setCurrentStep(prev => prev + 1)}
-          className="flex items-center gap-2 bg-slate-900 text-white px-8 py-2.5 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] hover:bg-black transition-all active:scale-95 disabled:opacity-20 shadow-lg shadow-slate-100"
-        >
-          {t.next} <ChevronRight size={16} />
-        </button>
-      </footer>
-
-      {isExporting && (
-        <div className="fixed inset-0 bg-white/80 backdrop-blur-2xl z-[200] flex items-center justify-center p-12">
-          <div className="bg-white shadow-2xl rounded-[4rem] p-16 max-w-md w-full border text-center space-y-8 animate-in zoom-in-95 duration-300">
-            <Loader2 size={64} className="text-blue-600 animate-spin mx-auto mb-4" />
-            <h3 className="text-2xl font-black text-slate-900 tracking-tight">Generating Assets...</h3>
-            <p className="text-slate-400 font-bold">Please wait while we process the files.</p>
-            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-               <div className="bg-blue-600 h-full transition-all" style={{ width: `${exportProgress}%` }} />
+      
+      {/* 全局处理状态 */}
+      {globalProcessing && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100]">
+          <div className="bg-white rounded-[3rem] p-8 max-w-md w-full text-center">
+            <div className="bg-blue-50 p-6 rounded-[2rem] mb-6 inline-block">
+              <Loader2 size={48} className="animate-spin text-blue-600" />
             </div>
+            <h3 className="font-black text-xl text-slate-900 mb-2">{t.processing}</h3>
+            <p className="text-slate-400 font-bold">{t.procDesc}</p>
+            <div className="mt-6 bg-slate-100 rounded-full h-2 overflow-hidden">
+              <div className="bg-blue-600 h-full transition-all" style={{ width: `${overallProgress}%` }} />
+            </div>
+            <p className="text-[10px] text-slate-400 uppercase font-black mt-3">{Math.round(overallProgress)}%</p>
           </div>
         </div>
       )}
-
-      <style>{`
-        .checkerboard {
-          background-image: linear-gradient(45deg, #111 25%, transparent 25%), 
-                            linear-gradient(-45deg, #111 25%, transparent 25%), 
-                            linear-gradient(45deg, transparent 75%, #111 75%), 
-                            linear-gradient(-45deg, transparent 75%, #111 75%);
-          background-size: 20px 20px;
-          background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
-        }
-        .checkerboard-sm {
-          background-image: linear-gradient(45deg, #eee 25%, transparent 25%), 
-                            linear-gradient(-45deg, #eee 25%, transparent 25%), 
-                            linear-gradient(45deg, transparent 75%, #eee 75%), 
-                            linear-gradient(-45deg, transparent 75%, #eee 75%);
-          background-size: 8px 8px;
-          background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
-        }
-        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes slide-in-from-bottom-8 { from { transform: translateY(2rem); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        @keyframes slide-in-from-left-8 { from { transform: translateX(-2rem); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        @keyframes slide-in-from-right-8 { from { transform: translateX(2rem); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        @keyframes zoom-in-95 { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
-        .animate-in { animation-duration: 400ms; animation-fill-mode: both; }
-        .fade-in { animation-name: fade-in; }
-        .slide-in-from-bottom-8 { animation-name: slide-in-from-bottom-8; }
-        .slide-in-from-left-8 { animation-name: slide-in-from-left-8; }
-        .slide-in-from-right-8 { animation-name: slide-in-from-right-8; }
-        .zoom-in-95 { animation-name: zoom-in-95; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
-      `}</style>
+      
+      {/* 导出状态 */}
+      {isExporting && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[100]">
+          <div className="bg-white rounded-[3rem] p-8 max-w-md w-full text-center">
+            <div className="bg-blue-50 p-6 rounded-[2rem] mb-6 inline-block">
+              <Loader2 size={48} className="animate-spin text-blue-600" />
+            </div>
+            <h3 className="font-black text-xl text-slate-900 mb-2">{t.gifProcessing}</h3>
+            <p className="text-slate-400 font-bold">{t.gifProcDesc}</p>
+            <div className="mt-6 bg-slate-100 rounded-full h-2 overflow-hidden">
+              <div className="bg-blue-600 h-full transition-all" style={{ width: `${exportProgress}%` }} />
+            </div>
+            <p className="text-[10px] text-slate-400 uppercase font-black mt-3">{Math.round(exportProgress)}%</p>
+          </div>
+        </div>
+      )}
     </div>
   );
-};
+}
 
 export default App;
