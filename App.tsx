@@ -42,7 +42,7 @@ const App: React.FC = () => {
   const [previewFrameIdx, setPreviewFrameIdx] = useState(0);
   const [previewBg, setPreviewBg] = useState<'checker' | 'white' | 'black' | 'green' | 'blue'>('checker');
   const [showProcessedInPreview, setShowProcessedInPreview] = useState(true);
-  const [previewPaused, setPreviewPaused] = useState(false);
+  const [previewPaused, setPreviewPaused] = useState(true);
 
   const [exportSettings, setExportSettings] = useState<ExportSettings>({
     fps: 15, prefix: 'anim',
@@ -195,6 +195,8 @@ const App: React.FC = () => {
       }
     } catch (err) { task.status = 'error'; }
     updateTask(task);
+    // 处理完成后确保预览是暂停状态
+    setPreviewPaused(true);
   };
 
   const processAllTasks = async () => {
@@ -211,25 +213,32 @@ const App: React.FC = () => {
     setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
   };
 
-  const handleManualSettingsChange = async (newSettings: Partial<ChromaSettings>) => {
+  const handleManualSettingsChange = (newSettings: Partial<ChromaSettings>) => {
     if (!activeTask) return;
     const task = { ...activeTask, settings: { ...activeTask.settings, ...newSettings } };
     updateTask(task);
+    // 只更新设置，不进行实时处理
+    // 处理将由用户点击按钮触发
+  };
+  
+  const handleApplySettings = async () => {
+    if (!activeTask) return;
     
-    // Skip reprocessing if only crop-related settings changed
-    const cropSettings = ['crop', 'cropMode', 'fixedCropWidth', 'fixedCropHeight', 'cropMargin'];
-    const onlyCropSettingsChanged = Object.keys(newSettings).every(key => 
-      cropSettings.includes(key) || 
-      (key === 'cropMargin' && typeof newSettings[key] === 'object')
-    );
+    setGlobalProcessing(true);
     
-    if (task.frames.length > 0 && !onlyCropSettingsChanged) {
+    try {
+      const task = { ...activeTask };
       const newFrames = [...task.frames];
       for (let i = 0; i < newFrames.length; i++) {
         newFrames[i].processedBlob = await applyChromaKey(newFrames[i].originalBlob, task.settings);
       }
       task.frames = newFrames;
       updateTask(task);
+    } catch (error) {
+      console.error('Error applying settings:', error);
+    } finally {
+      setGlobalProcessing(false);
+      setPreviewPaused(true);
     }
   };
   
@@ -818,9 +827,18 @@ const App: React.FC = () => {
                              </h2>
                              <div className="h-4 w-[1px] bg-slate-200" />
                              <button onClick={() => {
-                               const updated = { ...activeTask, frames: activeTask.frames.map(f => ({ ...f, selected: true })) };
+                               const allSelected = activeTask.frames.every(f => f.selected);
+                               const updated = { 
+                                 ...activeTask, 
+                                 frames: activeTask.frames.map(f => ({ 
+                                   ...f, 
+                                   selected: !allSelected 
+                                 })) 
+                               };
                                updateTask(updated);
-                             }} className="text-[10px] font-black text-slate-400 hover:text-blue-600 transition-colors">{t.all}</button>
+                             }} className="text-[10px] font-black text-slate-400 hover:text-blue-600 transition-colors">
+                               {activeTask.frames.every(f => f.selected) ? t.none : t.all}
+                             </button>
                           </div>
                           <div className="flex items-center gap-3">
                             {activeTask.status === 'done' ? (
@@ -982,7 +1000,18 @@ const App: React.FC = () => {
                                  </div>
                                )}
                              </div>
-                             
+                              
+                             {/* 应用设置按钮 */}
+                             <div className="pt-6 border-t border-slate-100">
+                               <button
+                                 onClick={handleApplySettings}
+                                 className="w-full py-3 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
+                               >
+                                 <RefreshCcw size={14} />
+                                 应用设置
+                               </button>
+                             </div>
+                              
                              {/* 空白裁剪设置 */}
                              <div className="pt-4 border-t border-slate-100">
                                <div className="flex justify-between items-center mb-4">
