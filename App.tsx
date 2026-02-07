@@ -43,6 +43,7 @@ const App: React.FC = () => {
   const [previewBg, setPreviewBg] = useState<'checker' | 'white' | 'black' | 'green' | 'blue'>('checker');
   const [showProcessedInPreview, setShowProcessedInPreview] = useState(true);
   const [previewPaused, setPreviewPaused] = useState(true);
+  const [previewInterval, setPreviewInterval] = useState(100); // 默认100毫秒
 
   const [exportSettings, setExportSettings] = useState<ExportSettings>({
     fps: 15, prefix: 'anim',
@@ -132,10 +133,10 @@ const App: React.FC = () => {
       if (selectedFrames.length === 0) return;
       const interval = setInterval(() => {
         setPreviewFrameIdx(prev => (prev + 1) % selectedFrames.length);
-      }, 1000 / exportSettings.fps);
+      }, previewInterval);
       return () => clearInterval(interval);
     }
-  }, [activeTaskId, activeTask?.frames, exportSettings.fps, previewPaused]);
+  }, [activeTaskId, activeTask?.frames, previewInterval, previewPaused]);
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -707,7 +708,18 @@ const App: React.FC = () => {
                      onMouseDown={handleMouseDown}
                      style={{ borderRadius: '2rem 2rem 0 0' }}
                    >
-                     <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">{t.previewAnim}</h4>
+                     <div className="flex items-center gap-2">
+                       <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400">{t.previewAnim}</h4>
+                       {currentPreviewFrame && (
+                         <span className="text-[9px] font-black text-slate-300 bg-slate-100 px-2 py-0.5 rounded-full">
+                           {(() => {
+                             const img = new Image();
+                             img.src = showProcessedInPreview ? (currentPreviewFrame.processedBlob || currentPreviewFrame.originalBlob) : currentPreviewFrame.originalBlob;
+                             return `${img.width || '?' }x${img.height || '?'}`;
+                           })()}
+                         </span>
+                       )}
+                     </div>
                      <button
                        onClick={() => setPreviewWindow({ ...previewWindow, isMinimized: true })}
                        className="bg-slate-200 text-slate-600 p-1.5 rounded-full hover:bg-slate-300 transition-colors"
@@ -722,7 +734,12 @@ const App: React.FC = () => {
                         {currentPreviewFrame ? (
                           <div className="relative w-full flex items-center justify-center">
                             {/* 上一帧按钮 */}
-                            <button onClick={() => { if (previewFrameIdx > 0) setPreviewFrameIdx(previewFrameIdx - 1); }} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-colors" style={{ zIndex: 10 }}>
+                            <button onClick={() => {
+                              const selectedFrames = activeTask?.frames.filter(f => f.selected) || [];
+                              if (selectedFrames.length > 0) {
+                                setPreviewFrameIdx(prev => (prev - 1 + selectedFrames.length) % selectedFrames.length);
+                              }
+                            }} className="absolute left-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-colors" style={{ zIndex: 10 }}>
                               <ChevronLeft size={24} />
                             </button>
                             
@@ -730,7 +747,12 @@ const App: React.FC = () => {
                             <img src={showProcessedInPreview ? (currentPreviewFrame.processedBlob || currentPreviewFrame.originalBlob) : currentPreviewFrame.originalBlob} className="max-w-full max-h-[300px] object-contain drop-shadow-2xl scale-100" />
                             
                             {/* 下一帧按钮 */}
-                            <button onClick={() => { const selectedFrames = activeTask?.frames.filter(f => f.selected) || []; if (previewFrameIdx < selectedFrames.length - 1) setPreviewFrameIdx(previewFrameIdx + 1); }} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-colors" style={{ zIndex: 10 }}>
+                            <button onClick={() => {
+                              const selectedFrames = activeTask?.frames.filter(f => f.selected) || [];
+                              if (selectedFrames.length > 0) {
+                                setPreviewFrameIdx(prev => (prev + 1) % selectedFrames.length);
+                              }
+                            }} className="absolute right-2 top-1/2 transform -translate-y-1/2 bg-black/50 text-white p-2 rounded-full hover:bg-black/70 transition-colors" style={{ zIndex: 10 }}>
                               <ChevronRight size={24} />
                             </button>
                           </div>
@@ -745,7 +767,12 @@ const App: React.FC = () => {
                      {/* 帧选择横向滚动条 */}
                      <div className="flex items-center gap-2">
                        {/* 上一帧按钮 */}
-                       <button onClick={() => { if (previewFrameIdx > 0) setPreviewFrameIdx(previewFrameIdx - 1); }} className="bg-slate-800 text-white p-2 rounded-full hover:bg-slate-700 transition-colors flex-shrink-0" disabled={previewFrameIdx === 0}>
+                       <button onClick={() => {
+                         const selectedFrames = activeTask?.frames.filter(f => f.selected) || [];
+                         if (selectedFrames.length > 0) {
+                           setPreviewFrameIdx(prev => (prev - 1 + selectedFrames.length) % selectedFrames.length);
+                         }
+                       }} className="bg-slate-800 text-white p-2 rounded-full hover:bg-slate-700 transition-colors flex-shrink-0" disabled={activeTask?.frames.filter(f => f.selected).length === 0}>
                          <ChevronLeft size={16} />
                        </button>
                        
@@ -761,7 +788,12 @@ const App: React.FC = () => {
                        </div>
                        
                        {/* 下一帧按钮 */}
-                       <button onClick={() => { const selectedFrames = activeTask?.frames.filter(f => f.selected) || []; if (previewFrameIdx < selectedFrames.length - 1) setPreviewFrameIdx(previewFrameIdx + 1); }} className="bg-slate-800 text-white p-2 rounded-full hover:bg-slate-700 transition-colors flex-shrink-0" disabled={activeTask?.frames.filter(f => f.selected).length === 0 || previewFrameIdx >= (activeTask?.frames.filter(f => f.selected).length || 0) - 1}>
+                       <button onClick={() => {
+                         const selectedFrames = activeTask?.frames.filter(f => f.selected) || [];
+                         if (selectedFrames.length > 0) {
+                           setPreviewFrameIdx(prev => (prev + 1) % selectedFrames.length);
+                         }
+                       }} className="bg-slate-800 text-white p-2 rounded-full hover:bg-slate-700 transition-colors flex-shrink-0" disabled={activeTask?.frames.filter(f => f.selected).length === 0}>
                          <ChevronRight size={16} />
                        </button>
                      </div>
@@ -771,6 +803,20 @@ const App: React.FC = () => {
                        {(['checker', 'white', 'black', 'green', 'blue'] as const).map(bg => (
                          <button key={bg} onClick={() => setPreviewBg(bg)} className={`flex-1 h-8 rounded-lg border-2 transition-all ${previewBg === bg ? 'border-blue-600' : 'border-slate-100'} ${bg === 'checker' ? 'bg-white' : bg === 'white' ? 'bg-white' : bg === 'black' ? 'bg-black' : bg === 'green' ? 'bg-green-500' : bg === 'blue' ? 'bg-blue-600' : ''}`} />
                        ))}
+                     </div>
+                     
+                     {/* 预览间隔时间设置 */}
+                     <div className="space-y-2">
+                       <div className="flex justify-between items-center">
+                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">预览间隔 (ms)</label>
+                         <span className="text-[10px] font-black font-mono text-blue-600">{previewInterval}</span>
+                       </div>
+                       <input 
+                         type="range" min="50" max="1000" step="50" 
+                         value={previewInterval} 
+                         onChange={(e) => setPreviewInterval(+e.target.value)}
+                         className="w-full h-1.5 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                       />
                      </div>
                      
                      {/* 视频播放器样式的控制按钮 */}
