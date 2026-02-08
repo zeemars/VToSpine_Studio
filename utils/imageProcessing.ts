@@ -145,60 +145,99 @@ export const applyChromaKey = (
         ctx.putImageData(imageData, 0, 0);
       }
 
-      // Step 3: Apply canvas resize if pixelate is enabled
+      // Step 3: Apply canvas resize
       let finalCanvas = canvas;
       let finalCtx = ctx;
       
-      if (settings.pixelate) {
-        // Create resized canvas if needed
-        if (settings.canvasWidth !== canvas.width || settings.canvasHeight !== canvas.height) {
-          const resizeCanvas = document.createElement('canvas');
-          resizeCanvas.width = settings.canvasWidth;
-          resizeCanvas.height = settings.canvasHeight;
-          const resizeCtx = resizeCanvas.getContext('2d');
-          
-          if (resizeCtx) {
-            // Calculate aspect ratio to maintain proportions
-            const aspectRatio = Math.min(
-              settings.canvasWidth / canvas.width,
-              settings.canvasHeight / canvas.height
-            );
-            const newWidth = canvas.width * aspectRatio;
-            const newHeight = canvas.height * aspectRatio;
-            const offsetX = (settings.canvasWidth - newWidth) / 2;
-            const offsetY = (settings.canvasHeight - newHeight) / 2;
-            
-            // Draw image to resized canvas
-            resizeCtx.drawImage(
-              canvas, 
-              offsetX, offsetY, 
-              newWidth, newHeight
-            );
-            
-            finalCanvas = resizeCanvas;
-            finalCtx = resizeCtx;
-          }
-        }
+      // Create resized canvas if needed
+      if (settings.canvasWidth !== canvas.width || settings.canvasHeight !== canvas.height) {
+        const resizeCanvas = document.createElement('canvas');
+        resizeCanvas.width = settings.canvasWidth;
+        resizeCanvas.height = settings.canvasHeight;
+        const resizeCtx = resizeCanvas.getContext('2d');
         
-        // Apply pixelation if pixelSize > 1
-        if (settings.pixelSize > 1) {
-          const pixelSize = settings.pixelSize;
-          const tempCanvas = document.createElement('canvas');
-          tempCanvas.width = Math.floor(finalCanvas.width / pixelSize);
-          tempCanvas.height = Math.floor(finalCanvas.height / pixelSize);
-          const tempCtx = tempCanvas.getContext('2d');
+        if (resizeCtx) {
+          // Calculate aspect ratio to maintain proportions
+          const aspectRatio = Math.min(
+            settings.canvasWidth / canvas.width,
+            settings.canvasHeight / canvas.height
+          );
+          const newWidth = canvas.width * aspectRatio;
+          const newHeight = canvas.height * aspectRatio;
           
-          if (tempCtx) {
-            // Draw image to temp canvas with reduced size
-            tempCtx.drawImage(finalCanvas, 0, 0, tempCanvas.width, tempCanvas.height);
-            
-            // Clear final canvas
-            finalCtx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
-            
-            // Draw pixelated image back to final canvas
-            finalCtx.imageSmoothingEnabled = false;
-            finalCtx.drawImage(tempCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
+          // Calculate offset based on canvasPosition
+          let offsetX = 0;
+          let offsetY = 0;
+          
+          switch (settings.canvasPosition) {
+            case 'top-left':
+              offsetX = 0;
+              offsetY = 0;
+              break;
+            case 'top-center':
+              offsetX = (settings.canvasWidth - newWidth) / 2;
+              offsetY = 0;
+              break;
+            case 'top-right':
+              offsetX = settings.canvasWidth - newWidth;
+              offsetY = 0;
+              break;
+            case 'center-left':
+              offsetX = 0;
+              offsetY = (settings.canvasHeight - newHeight) / 2;
+              break;
+            case 'center':
+              offsetX = (settings.canvasWidth - newWidth) / 2;
+              offsetY = (settings.canvasHeight - newHeight) / 2;
+              break;
+            case 'center-right':
+              offsetX = settings.canvasWidth - newWidth;
+              offsetY = (settings.canvasHeight - newHeight) / 2;
+              break;
+            case 'bottom-left':
+              offsetX = 0;
+              offsetY = settings.canvasHeight - newHeight;
+              break;
+            case 'bottom-center':
+              offsetX = (settings.canvasWidth - newWidth) / 2;
+              offsetY = settings.canvasHeight - newHeight;
+              break;
+            case 'bottom-right':
+              offsetX = settings.canvasWidth - newWidth;
+              offsetY = settings.canvasHeight - newHeight;
+              break;
           }
+          
+          // Draw image to resized canvas
+          resizeCtx.drawImage(
+            canvas, 
+            offsetX, offsetY, 
+            newWidth, newHeight
+          );
+          
+          finalCanvas = resizeCanvas;
+          finalCtx = resizeCtx;
+        }
+      }
+      
+      // Apply pixelation if pixelate is enabled and pixelSize > 1
+      if (settings.pixelate && settings.pixelSize > 1) {
+        const pixelSize = settings.pixelSize;
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = Math.floor(finalCanvas.width / pixelSize);
+        tempCanvas.height = Math.floor(finalCanvas.height / pixelSize);
+        const tempCtx = tempCanvas.getContext('2d');
+        
+        if (tempCtx) {
+          // Draw image to temp canvas with reduced size
+          tempCtx.drawImage(finalCanvas, 0, 0, tempCanvas.width, tempCanvas.height);
+          
+          // Clear final canvas
+          finalCtx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
+          
+          // Draw pixelated image back to final canvas
+          finalCtx.imageSmoothingEnabled = false;
+          finalCtx.drawImage(tempCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
         }
       }
 

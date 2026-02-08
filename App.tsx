@@ -3,9 +3,9 @@ import {
   Upload, Settings, Trash2, Play, Pause, Rewind, Download, CheckCircle2, Eraser, Monitor,
   Image as ImageIcon, Loader2, Languages, ChevronRight, ChevronLeft, Eye, 
   Palette, Github, Check, FileVideo, AlertTriangle, Plus, RefreshCcw, X, Edit3, Layers,
-  Minimize2, Maximize2, Scissors
+  Minimize2, Maximize2, Scissors, Save, Upload as LoadIcon
 } from 'lucide-react';
-import { FrameData, ChromaSettings, ExportSettings } from './types';
+import { FrameData, ChromaSettings, ExportSettings, SettingsPreset } from './types';
 import { extractFramesFromVideo, applyChromaKey, getTopLeftColor } from './utils/imageProcessing';
 import { generateSpineJson, generateAtlas, generateSpriteSheet } from './utils/spineExporter';
 import { translations, Language } from './translations';
@@ -44,6 +44,59 @@ const App: React.FC = () => {
   const [showProcessedInPreview, setShowProcessedInPreview] = useState(true);
   const [previewPaused, setPreviewPaused] = useState(true);
   const [previewInterval, setPreviewInterval] = useState(100); // 默认100毫秒
+  const [settingsPresets, setSettingsPresets] = useState<SettingsPreset[]>([]);
+  const [showPresetModal, setShowPresetModal] = useState(false);
+  const [newPresetName, setNewPresetName] = useState('');
+
+  // 从本地存储加载设置配置
+  useEffect(() => {
+    const savedPresets = localStorage.getItem('vtoSpineSettingsPresets');
+    if (savedPresets) {
+      try {
+        setSettingsPresets(JSON.parse(savedPresets));
+      } catch (error) {
+        console.error('Error loading settings presets:', error);
+      }
+    }
+  }, []);
+
+  // 保存设置配置到本地存储
+  const savePresetsToLocalStorage = (presets: SettingsPreset[]) => {
+    localStorage.setItem('vtoSpineSettingsPresets', JSON.stringify(presets));
+  };
+
+  // 保存当前设置为新的配置
+  const saveCurrentSettingsAsPreset = () => {
+    if (!activeTask || !newPresetName.trim()) return;
+
+    const newPreset: SettingsPreset = {
+      id: `preset_${Date.now()}`,
+      name: newPresetName.trim(),
+      createdAt: Date.now(),
+      settings: { ...activeTask.settings }
+    };
+
+    const updatedPresets = [...settingsPresets, newPreset];
+    setSettingsPresets(updatedPresets);
+    savePresetsToLocalStorage(updatedPresets);
+    setShowPresetModal(false);
+    setNewPresetName('');
+  };
+
+  // 加载设置配置
+  const loadPreset = (preset: SettingsPreset) => {
+    if (!activeTask) return;
+
+    const updatedTask = { ...activeTask, settings: preset.settings };
+    updateTask(updatedTask);
+  };
+
+  // 删除设置配置
+  const deletePreset = (presetId: string) => {
+    const updatedPresets = settingsPresets.filter(preset => preset.id !== presetId);
+    setSettingsPresets(updatedPresets);
+    savePresetsToLocalStorage(updatedPresets);
+  };
 
   const [exportSettings, setExportSettings] = useState<ExportSettings>({
     fps: 15, prefix: 'anim',
@@ -149,7 +202,7 @@ const App: React.FC = () => {
         frames: [], 
         progress: 0,
         videoUrl: URL.createObjectURL(file),
-        settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, edgeShrink: 0, pixelate: false, pixelSize: 4, canvasWidth: 512, canvasHeight: 512, crop: false, cropMode: 'max', fixedCropWidth: 512, fixedCropHeight: 512, cropMargin: { top: 0, bottom: 0, left: 0, right: 0 }, enabled: true }
+        settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, edgeShrink: 0, pixelate: false, pixelSize: 4, canvasWidth: 512, canvasHeight: 512, canvasPosition: 'center', crop: false, cropMode: 'max', fixedCropWidth: 512, fixedCropHeight: 512, cropMargin: { top: 0, bottom: 0, left: 0, right: 0 }, enabled: true }
       }));
       setTasks(prev => [...prev, ...newTasks]);
       if (!activeTaskId && newTasks.length > 0) setActiveTaskId(newTasks[0].id);
@@ -605,7 +658,7 @@ const App: React.FC = () => {
                     frames: [], 
                     progress: 0,
                     videoUrl: URL.createObjectURL(file),
-                    settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, edgeShrink: 0, pixelate: false, pixelSize: 4, canvasWidth: 512, canvasHeight: 512, crop: false, cropMode: 'max', fixedCropWidth: 512, fixedCropHeight: 512, cropMargin: { top: 0, bottom: 0, left: 0, right: 0 }, enabled: true }
+                    settings: { targetColor: { r: 0, g: 0, b: 0 }, threshold: 30, smoothing: 10, edgeShrink: 0, pixelate: false, pixelSize: 4, canvasWidth: 512, canvasHeight: 512, canvasPosition: 'center', crop: false, cropMode: 'max', fixedCropWidth: 512, fixedCropHeight: 512, cropMargin: { top: 0, bottom: 0, left: 0, right: 0 }, enabled: true }
                   }));
                   setTasks(prev => [...prev, ...newTasks]);
                   if (!activeTaskId && newTasks.length > 0) setActiveTaskId(newTasks[0].id);
@@ -1002,6 +1055,63 @@ const App: React.FC = () => {
                              </div>
 
                              <div className="pt-4 border-t border-slate-100">
+                               {/* Canvas Size Setting */}
+                               <div className="space-y-6">
+                                 <div>
+                                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">画布大小</label>
+                                   <div className="grid grid-cols-2 gap-3 mb-4">
+                                     <div>
+                                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">宽度</label>
+                                       <input 
+                                         type="number" 
+                                         min="1" 
+                                         value={activeTask.settings.canvasWidth} 
+                                         onChange={(e) => handleManualSettingsChange({ canvasWidth: +e.target.value })}
+                                         className="w-full py-2 px-3 rounded-xl text-[10px] font-black border border-slate-200 focus:border-blue-600 focus:outline-none transition-all"
+                                       />
+                                     </div>
+                                     <div>
+                                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">高度</label>
+                                       <input 
+                                         type="number" 
+                                         min="1" 
+                                         value={activeTask.settings.canvasHeight} 
+                                         onChange={(e) => handleManualSettingsChange({ canvasHeight: +e.target.value })}
+                                         className="w-full py-2 px-3 rounded-xl text-[10px] font-black border border-slate-200 focus:border-blue-600 focus:outline-none transition-all"
+                                       />
+                                     </div>
+                                   </div>
+                                   
+                                   {/* Canvas Position Setting */}
+                                   <div>
+                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">画布位置</label>
+                                     <div className="grid grid-cols-3 gap-2">
+                                       {[
+                                         { key: 'top-left', label: '左上' },
+                                         { key: 'top-center', label: '上中' },
+                                         { key: 'top-right', label: '右上' },
+                                         { key: 'center-left', label: '左中' },
+                                         { key: 'center', label: '中心' },
+                                         { key: 'center-right', label: '右中' },
+                                         { key: 'bottom-left', label: '左下' },
+                                         { key: 'bottom-center', label: '下中' },
+                                         { key: 'bottom-right', label: '右下' }
+                                       ].map(position => (
+                                         <button
+                                           key={position.key}
+                                           onClick={() => handleManualSettingsChange({ canvasPosition: position.key as any })}
+                                           className={`py-2 px-3 rounded-xl text-[9px] font-black transition-all ${activeTask.settings.canvasPosition === position.key ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                                         >
+                                           {position.label}
+                                         </button>
+                                       ))}
+                                     </div>
+                                   </div>
+                                 </div>
+                               </div>
+                             </div>
+                             
+                             <div className="pt-4 border-t border-slate-100">
                                <div className="flex justify-between items-center mb-4">
                                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.pixelate}</label>
                                   <button 
@@ -1014,22 +1124,6 @@ const App: React.FC = () => {
                                 
                                {activeTask.settings.pixelate && (
                                  <div className="space-y-6">
-                                   {/* Canvas Size Selection */}
-                                   <div>
-                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">{t.canvasSize}</label>
-                                     <div className="grid grid-cols-3 gap-2">
-                                       {[16, 32, 64, 128, 512].map(size => (
-                                         <button
-                                           key={size}
-                                           onClick={() => handleManualSettingsChange({ canvasWidth: size, canvasHeight: size })}
-                                           className={`py-2 px-3 rounded-xl text-[10px] font-black transition-all ${activeTask.settings.canvasWidth === size && activeTask.settings.canvasHeight === size ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
-                                         >
-                                           {size}x{size}
-                                         </button>
-                                       ))}
-                                     </div>
-                                   </div>
-                                   
                                    {/* Pixel Size */}
                                    <div>
                                      <div className="flex justify-between items-center mb-2">
@@ -1173,6 +1267,52 @@ const App: React.FC = () => {
                                  </div>
                                )}
                              </div>
+                             
+                             {/* 设置配置管理 */}
+                             <div className="pt-4 border-t border-slate-100">
+                               <h4 className="font-black text-[10px] uppercase tracking-[0.2em] text-slate-400 mb-4">{t.settingsPresets}</h4>
+                               
+                               {/* 保存当前设置按钮 */}
+                               <button
+                                 onClick={() => setShowPresetModal(true)}
+                                 className="w-full py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest transition-all mb-4 flex items-center justify-center gap-2"
+                               >
+                                 <Save size={12} />
+                                 {t.saveCurrentSettings}
+                               </button>
+                               
+                               {/* 设置配置列表 */}
+                               <div className="space-y-2 max-h-48 overflow-y-auto">
+                                 {settingsPresets.length === 0 ? (
+                                   <p className="text-[10px] text-slate-400 text-center py-4">{t.noPresets}</p>
+                                 ) : (
+                                   settingsPresets.map(preset => (
+                                     <div key={preset.id} className="bg-slate-50 rounded-xl p-3 flex justify-between items-center">
+                                       <div>
+                                         <p className="text-[10px] font-black text-slate-700">{preset.name}</p>
+                                         <p className="text-[8px] text-slate-400">
+                                           {new Date(preset.createdAt).toLocaleString()}
+                                         </p>
+                                       </div>
+                                       <div className="flex gap-2">
+                                         <button
+                                           onClick={() => loadPreset(preset)}
+                                           className="w-6 h-6 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center transition-all"
+                                         >
+                                           <LoadIcon size={12} />
+                                         </button>
+                                         <button
+                                           onClick={() => deletePreset(preset.id)}
+                                           className="w-6 h-6 rounded-lg bg-slate-200 hover:bg-slate-300 flex items-center justify-center transition-all"
+                                         >
+                                           <Trash2 size={12} />
+                                         </button>
+                                       </div>
+                                     </div>
+                                   ))
+                                 )}
+                               </div>
+                             </div>
                           </div>
                        </div>
                     </div>
@@ -1186,6 +1326,48 @@ const App: React.FC = () => {
                  </div>
                )}
             </section>
+          </div>
+        )}
+
+        {/* 保存设置配置模态框 */}
+        {showPresetModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-in fade-in duration-300">
+            <div className="bg-white rounded-[2rem] p-6 max-w-md w-full animate-in slide-in-from-bottom-8 duration-500">
+              <h3 className="font-black text-xl tracking-tight text-slate-900 mb-4">{t.savePresetModal}</h3>
+              <p className="text-[10px] text-slate-500 mb-6">为当前的抠图参数、画布大小、像素化和空白裁剪设置创建一个配置文件</p>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-2">{t.presetName}</label>
+                  <input
+                    type="text"
+                    value={newPresetName}
+                    onChange={(e) => setNewPresetName(e.target.value)}
+                    placeholder="例如：绿色背景抠图"
+                    className="w-full py-3 px-4 rounded-xl text-[10px] font-black border border-slate-200 focus:border-blue-600 focus:outline-none transition-all"
+                  />
+                </div>
+                
+                <div className="flex gap-3 pt-4">
+                  <button
+                    onClick={() => {
+                      setShowPresetModal(false);
+                      setNewPresetName('');
+                    }}
+                    className="flex-1 py-3 px-4 rounded-xl bg-slate-200 text-slate-700 text-[10px] font-black uppercase tracking-widest hover:bg-slate-300 transition-all"
+                  >
+                    {t.cancel}
+                  </button>
+                  <button
+                    onClick={saveCurrentSettingsAsPreset}
+                    disabled={!newPresetName.trim()}
+                    className="flex-1 py-3 px-4 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-blue-700 disabled:bg-slate-400 disabled:cursor-not-allowed transition-all"
+                  >
+                    {t.savePreset}
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 

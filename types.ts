@@ -16,6 +16,7 @@ export interface ChromaSettings {
   pixelSize: number;
   canvasWidth: number;
   canvasHeight: number;
+  canvasPosition: 'center' | 'top-left' | 'top-center' | 'top-right' | 'center-left' | 'center-right' | 'bottom-left' | 'bottom-center' | 'bottom-right';
   crop: boolean;
   cropMode: 'max' | 'fixed';
   fixedCropWidth: number;
@@ -44,4 +45,11 @@ export interface ExportSettings {
   scalingAlgorithm: string;
   // Spacing
   spacing: number;
+}
+
+export interface SettingsPreset {
+  id: string;
+  name: string;
+  createdAt: number;
+  settings: ChromaSettings;
 }

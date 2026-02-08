@@ -93,7 +93,16 @@ export const translations = {
     editTask: "Manual Edit",
     selectTaskPrompt: "Select a video from the list to start editing",
     autoPickColor: "Auto Color",
-    reProcess: "Re-process"
+    reProcess: "Re-process",
+    settingsPresets: "Settings Presets",
+    saveCurrentSettings: "Save Current Settings",
+    loadPreset: "Load Preset",
+    deletePreset: "Delete Preset",
+    savePresetModal: "Save Settings Preset",
+    presetName: "Preset Name",
+    noPresets: "No saved settings presets",
+    cancel: "Cancel",
+    savePreset: "Save Preset"
   },
   zh: {
     title: "VToSpine Studio",
@@ -189,7 +198,16 @@ export const translations = {
     editTask: "精细编辑",
     selectTaskPrompt: "请从列表中选择一个视频开始编辑",
     autoPickColor: "自动取色",
-    reProcess: "重新处理"
+    reProcess: "重新处理",
+    settingsPresets: "设置配置",
+    saveCurrentSettings: "保存当前设置",
+    loadPreset: "加载配置",
+    deletePreset: "删除配置",
+    savePresetModal: "保存设置配置",
+    presetName: "配置名称",
+    noPresets: "暂无保存的设置配置",
+    cancel: "取消",
+    savePreset: "保存配置"
   }
 };
 
