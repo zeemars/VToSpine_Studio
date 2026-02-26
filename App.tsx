@@ -47,6 +47,7 @@ const App: React.FC = () => {
   const [settingsPresets, setSettingsPresets] = useState<SettingsPreset[]>([]);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [newPresetName, setNewPresetName] = useState('');
+  const [frameInterval, setFrameInterval] = useState(1);
 
   // 从本地存储加载设置配置
   useEffect(() => {
@@ -991,6 +992,31 @@ const App: React.FC = () => {
                              }} className="text-[10px] font-black text-slate-400 hover:text-blue-600 transition-colors">
                                {activeTask.frames.every(f => f.selected) ? t.none : t.all}
                              </button>
+                             <div className="h-4 w-[1px] bg-slate-200" />
+                             <div className="flex items-center gap-2">
+                               <label className="text-[10px] font-black text-slate-400">{t.frameInterval}:</label>
+                               <input 
+                                 type="number" 
+                                 min="1" 
+                                 max="10" 
+                                 value={frameInterval} 
+                                 onChange={(e) => setFrameInterval(Math.max(1, Math.min(10, parseInt(e.target.value) || 1)))} 
+                                 className="w-16 py-1 px-2 rounded-lg text-[10px] font-black border border-slate-200 focus:border-blue-600 focus:outline-none transition-all"
+                               />
+                               <button onClick={() => {
+                                 if (!activeTask) return;
+                                 const updated = { 
+                                   ...activeTask, 
+                                   frames: activeTask.frames.map((f, index) => ({ 
+                                     ...f, 
+                                     selected: index % frameInterval === 0 
+                                   })) 
+                                 };
+                                 updateTask(updated);
+                               }} className="text-[10px] font-black text-slate-400 hover:text-blue-600 transition-colors">
+                                 {t.selectInterval}
+                               </button>
+                             </div>
                           </div>
                           <div className="flex items-center gap-3">
                             {activeTask.status === 'done' ? (
