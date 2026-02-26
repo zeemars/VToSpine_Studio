@@ -45,6 +45,8 @@ export interface ExportSettings {
   scalingAlgorithm: string;
   // Spacing
   spacing: number;
+  // Export as individual images
+  exportAsIndividualImages: boolean;
 }
 
 export interface SettingsPreset {

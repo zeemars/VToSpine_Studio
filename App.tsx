@@ -107,7 +107,8 @@ const App: React.FC = () => {
     frameHeight: 494,
     lockRatio: true,
     scalingAlgorithm: 'Lanczos',
-    spacing: 0
+    spacing: 0,
+    exportAsIndividualImages: false
   });
 
   // 预览窗口状态
@@ -538,16 +539,39 @@ const App: React.FC = () => {
     setExportProgress(0);
     const zip = new JSZip();
     
+    let totalFrames = 0;
+    for (const task of completedTasks) {
+      totalFrames += task.frames.length;
+    }
+    let processedFrames = 0;
+    
     for (let i = 0; i < completedTasks.length; i++) {
       const task = completedTasks[i];
-      setExportProgress(((i + 0.1) / completedTasks.length) * 100);
       
-      const spriteSheetBase64 = await generateSpriteSheet(task.frames, exportSettings);
-      const spriteSheetData = spriteSheetBase64.split(',')[1];
-      
-      const pngFileName = `${getSafeBaseName(task.name, task.id)}.png`;
-      zip.file(pngFileName, spriteSheetData, { base64: true });
-      setExportProgress(((i + 1) / completedTasks.length) * 100);
+      if (exportSettings.exportAsIndividualImages) {
+        // 导出为单张图片
+        for (let j = 0; j < task.frames.length; j++) {
+          const frame = task.frames[j];
+          const frameData = frame.processedBlob || frame.originalBlob;
+          const frameDataSplit = frameData.split(',');
+          if (frameDataSplit.length > 1) {
+            const frameBase64 = frameDataSplit[1];
+            const frameFileName = `${getSafeBaseName(task.name, task.id)}/${exportSettings.prefix}_${j + 1}.png`;
+            zip.file(frameFileName, frameBase64, { base64: true });
+          }
+          processedFrames++;
+          setExportProgress((processedFrames / totalFrames) * 100);
+        }
+      } else {
+        // 导出为精灵图
+        setExportProgress(((i + 0.1) / completedTasks.length) * 100);
+        const spriteSheetBase64 = await generateSpriteSheet(task.frames, exportSettings);
+        const spriteSheetData = spriteSheetBase64.split(',')[1];
+        const pngFileName = `${getSafeBaseName(task.name, task.id)}.png`;
+        zip.file(pngFileName, spriteSheetData, { base64: true });
+        processedFrames += task.frames.length;
+        setExportProgress((processedFrames / totalFrames) * 100);
+      }
     }
 
     const content = await zip.generateAsync({ type: "blob" });
@@ -1511,6 +1535,20 @@ const App: React.FC = () => {
                         min="0"
                       />
                     </div>
+                    
+                    {/* 导出为单张图片 */}
+                    <div className="mb-6">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.exportAsIndividualImages}</label>
+                        <button
+                          onClick={() => setExportSettings({ ...exportSettings, exportAsIndividualImages: !exportSettings.exportAsIndividualImages })}
+                          className={`w-10 h-5 rounded-full relative transition-all ${exportSettings.exportAsIndividualImages ? 'bg-blue-600' : 'bg-slate-200'}`}
+                        >
+                          <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${exportSettings.exportAsIndividualImages ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                        </button>
+                      </div>
+                      <p className="text-[9px] text-slate-400 mt-2">{t.individualImagesDesc}</p>
+                    </div>
                   </div>
                 </div>
                 
@@ -1538,7 +1576,7 @@ const App: React.FC = () => {
                     ) : (
                       <ImageIcon size={20} />
                     )}
-                    导出PNG精灵图
+                    {exportSettings.exportAsIndividualImages ? t.exportIndividualPngs : '导出PNG精灵图'}
                   </button>
                   <button
                     onClick={batchExportGifs}

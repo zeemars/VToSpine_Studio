@@ -43,6 +43,10 @@ export const translations = {
     // Export Settings Tabs
     spriteSheet: "Sprite Sheet",
     gifAnimation: "GIF Animation",
+    // Individual Images Export
+    exportAsIndividualImages: "Export as Individual Images",
+    individualImagesDesc: "Export each frame as a separate PNG file instead of combining into a sprite sheet",
+    exportIndividualPngs: "Export Individual PNGs",
     // Layout
     layout: "Layout",
     gridLayout: "Grid Layout",
@@ -148,6 +152,10 @@ export const translations = {
     // Export Settings Tabs
     spriteSheet: "精灵图",
     gifAnimation: "GIF动画",
+    // Individual Images Export
+    exportAsIndividualImages: "导出为单张图片",
+    individualImagesDesc: "将每个帧导出为单独的PNG文件，而不是合并为精灵图",
+    exportIndividualPngs: "导出单张PNG",
     // Layout
     layout: "布局",
     gridLayout: "网格排列",
