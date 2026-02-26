@@ -56,6 +56,100 @@ export const getTopLeftColor = (sourceBase64: string): Promise<{ r: number; g: n
   });
 };
 
+
+
+function applyPerfectPixel(canvas: HTMLCanvasElement, pixelSize: number): HTMLCanvasElement {
+  // Early return if pixel size is 1 or canvas is too small
+  if (pixelSize <= 1 || canvas.width < pixelSize || canvas.height < pixelSize) {
+    return canvas;
+  }
+  
+  // Calculate grid size directly based on pixel size
+  const gridW = Math.floor(canvas.width / pixelSize);
+  const gridH = Math.floor(canvas.height / pixelSize);
+  
+  // Create output canvas with reduced size
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = gridW;
+  outputCanvas.height = gridH;
+  const outputCtx = outputCanvas.getContext('2d')!;
+  const outputData = outputCtx.createImageData(gridW, gridH);
+  
+  // Get original image data
+  const ctx = canvas.getContext('2d')!;
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  const { width, height } = canvas;
+  
+  // Process each grid cell
+  for (let j = 0; j < gridH; j++) {
+    const y0 = j * pixelSize;
+    const y1 = Math.min((j + 1) * pixelSize, height);
+    
+    for (let i = 0; i < gridW; i++) {
+      const x0 = i * pixelSize;
+      const x1 = Math.min((i + 1) * pixelSize, width);
+      
+      let totalAlpha = 0;
+      const colorCounts: Record<string, number> = {};
+      let maxCount = 0;
+      let majorityColor = [0, 0, 0];
+      
+      // Process pixels in the cell
+      for (let y = y0; y < y1; y++) {
+        for (let x = x0; x < x1; x++) {
+          const index = (y * width + x) * 4;
+          const alpha = data[index + 3];
+          totalAlpha += alpha;
+          
+          if (alpha > 0) {
+            const r = data[index];
+            const g = data[index + 1];
+            const b = data[index + 2];
+            const key = `${r},${g},${b}`;
+            
+            // Update color count
+            const count = (colorCounts[key] || 0) + 1;
+            colorCounts[key] = count;
+            
+            // Update majority color
+            if (count > maxCount) {
+              maxCount = count;
+              majorityColor = [r, g, b];
+            }
+          }
+        }
+      }
+      
+      // Calculate average alpha
+      const cellArea = (y1 - y0) * (x1 - x0);
+      const averageAlpha = cellArea > 0 ? totalAlpha / cellArea : 0;
+      
+      // Set output pixel
+      const outputIndex = (j * gridW + i) * 4;
+      outputData.data[outputIndex] = majorityColor[0];
+      outputData.data[outputIndex + 1] = majorityColor[1];
+      outputData.data[outputIndex + 2] = majorityColor[2];
+      outputData.data[outputIndex + 3] = Math.round(averageAlpha);
+    }
+  }
+  
+  // Put processed data to output canvas
+  outputCtx.putImageData(outputData, 0, 0);
+  
+  // Create final canvas with pixelated effect
+  const finalCanvas = document.createElement('canvas');
+  finalCanvas.width = canvas.width;
+  finalCanvas.height = canvas.height;
+  const finalCtx = finalCanvas.getContext('2d')!;
+  
+  // Draw sampled image back to original size with no smoothing
+  finalCtx.imageSmoothingEnabled = false;
+  finalCtx.drawImage(outputCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
+  
+  return finalCanvas;
+}
+
 export const applyChromaKey = (
   sourceBase64: string,
   settings: ChromaSettings
@@ -104,43 +198,59 @@ export const applyChromaKey = (
         const shrinkDistance = edgeShrink;
         const newData = new Uint8ClampedArray(data);
 
-        for (let y = 0; y < canvas.height; y++) {
-          for (let x = 0; x < canvas.width; x++) {
-            const index = (y * canvas.width + x) * 4;
-            const alpha = data[index + 3];
+        // Early exit if shrink distance is too large for the canvas
+        if (shrinkDistance >= Math.min(canvas.width, canvas.height) / 2) {
+          ctx.putImageData(imageData, 0, 0);
+        } else {
+          for (let y = 0; y < canvas.height; y++) {
+            for (let x = 0; x < canvas.width; x++) {
+              const index = (y * canvas.width + x) * 4;
+              const alpha = data[index + 3];
 
-            if (alpha > 0) {
-              // Check surrounding pixels
-              let hasTransparentNeighbor = false;
-              
-              for (let dy = -shrinkDistance; dy <= shrinkDistance; dy++) {
-                for (let dx = -shrinkDistance; dx <= shrinkDistance; dx++) {
-                  if (dx === 0 && dy === 0) continue;
-                  
-                  const nx = x + dx;
-                  const ny = y + dy;
-                  
-                  if (nx >= 0 && nx < canvas.width && ny >= 0 && ny < canvas.height) {
-                    const neighborIndex = (ny * canvas.width + nx) * 4;
-                    const neighborAlpha = data[neighborIndex + 3];
-                    
-                    if (neighborAlpha === 0) {
+              if (alpha > 0) {
+                // Check surrounding pixels with early exit
+                let hasTransparentNeighbor = false;
+                
+                // Only check within the actual canvas bounds
+                const startY = Math.max(0, y - shrinkDistance);
+                const endY = Math.min(canvas.height - 1, y + shrinkDistance);
+                const startX = Math.max(0, x - shrinkDistance);
+                const endX = Math.min(canvas.width - 1, x + shrinkDistance);
+                
+                // Check only the perimeter of the shrink distance
+                // This reduces the number of checks from (2d+1)^2 to 4d
+                for (let dy = startY; dy <= endY; dy++) {
+                  if (dy === startY || dy === endY) {
+                    // Check entire row
+                    for (let dx = startX; dx <= endX; dx++) {
+                      if (dx === x && dy === y) continue;
+                      const neighborIndex = (dy * canvas.width + dx) * 4;
+                      if (data[neighborIndex + 3] === 0) {
+                        hasTransparentNeighbor = true;
+                        break;
+                      }
+                    }
+                  } else {
+                    // Check only first and last column
+                    const leftIndex = (dy * canvas.width + startX) * 4;
+                    const rightIndex = (dy * canvas.width + endX) * 4;
+                    if (data[leftIndex + 3] === 0 || data[rightIndex + 3] === 0) {
                       hasTransparentNeighbor = true;
                       break;
                     }
                   }
+                  if (hasTransparentNeighbor) break;
                 }
-                if (hasTransparentNeighbor) break;
-              }
 
-              if (hasTransparentNeighbor) {
-                newData[index + 3] = 0; // Make transparent
+                if (hasTransparentNeighbor) {
+                  newData[index + 3] = 0; // Make transparent
+                }
               }
             }
           }
-        }
 
-        ctx.putImageData(new ImageData(newData, canvas.width, canvas.height), 0, 0);
+          ctx.putImageData(new ImageData(newData, canvas.width, canvas.height), 0, 0);
+        }
       } else {
         ctx.putImageData(imageData, 0, 0);
       }
@@ -222,23 +332,9 @@ export const applyChromaKey = (
       
       // Apply pixelation if pixelate is enabled and pixelSize > 1
       if (settings.pixelate && settings.pixelSize > 1) {
-        const pixelSize = settings.pixelSize;
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = Math.floor(finalCanvas.width / pixelSize);
-        tempCanvas.height = Math.floor(finalCanvas.height / pixelSize);
-        const tempCtx = tempCanvas.getContext('2d');
-        
-        if (tempCtx) {
-          // Draw image to temp canvas with reduced size
-          tempCtx.drawImage(finalCanvas, 0, 0, tempCanvas.width, tempCanvas.height);
-          
-          // Clear final canvas
-          finalCtx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
-          
-          // Draw pixelated image back to final canvas
-          finalCtx.imageSmoothingEnabled = false;
-          finalCtx.drawImage(tempCanvas, 0, 0, finalCanvas.width, finalCanvas.height);
-        }
+        // Use perfect pixelation algorithm
+        finalCanvas = applyPerfectPixel(finalCanvas, settings.pixelSize);
+        finalCtx = finalCanvas.getContext('2d')!;
       }
 
       // Crop is now handled in batch mode via handleCrop function in App.tsx

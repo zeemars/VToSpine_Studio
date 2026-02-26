@@ -87,7 +87,28 @@ const App: React.FC = () => {
   const loadPreset = (preset: SettingsPreset) => {
     if (!activeTask) return;
 
-    const updatedTask = { ...activeTask, settings: preset.settings };
+    // 确保加载的设置包含所有必要的字段
+    const defaultSettings = {
+      targetColor: { r: 0, g: 0, b: 0 },
+      threshold: 30,
+      smoothing: 10,
+      edgeShrink: 0,
+      pixelate: false,
+      pixelSize: 4,
+      canvasWidth: 512,
+      canvasHeight: 512,
+      canvasPosition: 'center' as const,
+      crop: false,
+      cropMode: 'max' as const,
+      fixedCropWidth: 512,
+      fixedCropHeight: 512,
+      cropMargin: { top: 0, bottom: 0, left: 0, right: 0 },
+      enabled: true
+    };
+
+    // 合并默认设置和加载的设置，确保所有字段都存在
+    const mergedSettings = { ...defaultSettings, ...preset.settings };
+    const updatedTask = { ...activeTask, settings: mergedSettings };
     updateTask(updatedTask);
   };
 
@@ -195,7 +216,15 @@ const App: React.FC = () => {
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      const newTasks: BatchTask[] = Array.from(files).map((file: File) => ({
+      // Filter only video files
+      const videoFiles = Array.from(files).filter(file => file.type.startsWith('video/'));
+      
+      if (videoFiles.length === 0) {
+        alert('请上传视频文件');
+        return;
+      }
+      
+      const newTasks: BatchTask[] = videoFiles.map((file: File) => ({
         id: Math.random().toString(36).substr(2, 9),
         file, 
         name: file.name, 
