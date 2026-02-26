@@ -914,7 +914,7 @@ const App: React.FC = () => {
                      {/* 预览间隔时间设置 */}
                      <div className="space-y-2">
                        <div className="flex justify-between items-center">
-                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">预览间隔 (ms)</label>
+                         <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{t.previewInterval} (ms)</label>
                          <span className="text-[10px] font-black font-mono text-blue-600">{previewInterval}</span>
                        </div>
                        <input 
@@ -1111,7 +1111,7 @@ const App: React.FC = () => {
                                {/* Canvas Size Setting */}
                                <div className="space-y-6">
                                  <div>
-                                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">画布大小</label>
+                                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">{t.canvasSize}</label>
                                    <div className="grid grid-cols-2 gap-3 mb-4">
                                      <div>
                                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">宽度</label>
@@ -1137,27 +1137,29 @@ const App: React.FC = () => {
                                    
                                    {/* Canvas Position Setting */}
                                    <div>
-                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">画布位置</label>
+                                     <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block mb-3">{t.canvasPosition}</label>
                                      <div className="grid grid-cols-3 gap-2">
-                                       {[
-                                         { key: 'top-left', label: '左上' },
-                                         { key: 'top-center', label: '上中' },
-                                         { key: 'top-right', label: '右上' },
-                                         { key: 'center-left', label: '左中' },
-                                         { key: 'center', label: '中心' },
-                                         { key: 'center-right', label: '右中' },
-                                         { key: 'bottom-left', label: '左下' },
-                                         { key: 'bottom-center', label: '下中' },
-                                         { key: 'bottom-right', label: '右下' }
-                                       ].map(position => (
-                                         <button
-                                           key={position.key}
-                                           onClick={() => handleManualSettingsChange({ canvasPosition: position.key as any })}
-                                           className={`py-2 px-3 rounded-xl text-[9px] font-black transition-all ${activeTask.settings.canvasPosition === position.key ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
-                                         >
-                                           {position.label}
-                                         </button>
-                                       ))}
+                                       {
+                                         [
+                                           { key: 'top-left', label: lang === 'zh' ? '左上' : 'Top Left' },
+                                           { key: 'top-center', label: lang === 'zh' ? '上中' : 'Top Center' },
+                                           { key: 'top-right', label: lang === 'zh' ? '右上' : 'Top Right' },
+                                           { key: 'center-left', label: lang === 'zh' ? '左中' : 'Center Left' },
+                                           { key: 'center', label: lang === 'zh' ? '中心' : 'Center' },
+                                           { key: 'center-right', label: lang === 'zh' ? '右中' : 'Center Right' },
+                                           { key: 'bottom-left', label: lang === 'zh' ? '左下' : 'Bottom Left' },
+                                           { key: 'bottom-center', label: lang === 'zh' ? '下中' : 'Bottom Center' },
+                                           { key: 'bottom-right', label: lang === 'zh' ? '右下' : 'Bottom Right' }
+                                         ].map(position => (
+                                           <button
+                                             key={position.key}
+                                             onClick={() => handleManualSettingsChange({ canvasPosition: position.key as any })}
+                                             className={`py-2 px-3 rounded-xl text-[9px] font-black transition-all ${activeTask.settings.canvasPosition === position.key ? 'bg-blue-600 text-white' : 'bg-slate-100 hover:bg-slate-200 text-slate-700'}`}
+                                           >
+                                             {position.label}
+                                           </button>
+                                         ))
+                                       }
                                      </div>
                                    </div>
                                  </div>
